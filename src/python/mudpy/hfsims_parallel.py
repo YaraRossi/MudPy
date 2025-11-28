@@ -354,8 +354,19 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
             elif Qmethod == 'fastest' or Qmethod=='direct':   #Pick first arriving S wave
                 
                 directS = Spaths[0]
-                
-                
+
+            elif Qmethod == 'all':
+
+                # get all paths arriving within the total_duration of the timeseries
+                allpaths = velmod.get_ray_paths(zs, dist_in_degs)
+                selected_paths = [p for p in allpaths if p.time <= total_duration]
+
+                # get all S arriving paths
+                allS = [p for p in selected_paths if p.name.lower().endswith('s')]
+
+                # get all P arriving paths
+                allP = [p for p in selected_paths if p.name.lower().endswith('p')]
+
             
             #directS=Spaths[0]  #this is the old way, kept fastest S
             mohoS=None
@@ -381,90 +392,98 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
  
             #######         Build Direct P ray           ######
             if Pwave==True:
-                take_off_angle_P=directP.takeoff_angle
-                
-                # #Get attenuation due to geometrical spreading (from the path length)
-                # path_length_P=hfsims.get_path_length(directP,zs,dist_in_degs)
-                # path_length_P=path_length_P*100 #to cm
-                
-                # #Get effect of intrinsic attenuation for that ray (path integrated)
-                # #Q_P=hfsims.get_attenuation(f,structure,directP,Qexp,Qtype='P')   <- This causes problems and I don't know why underlying assumptions might be bad
-                # Q_P=hfsims.get_attenuation(f,structure,directS,Qexp,Qtype='S')
-                
-                # #get quarter wavelength amplificationf actors
-                # # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
-                # I_P=hfsims.get_amplification_factors(f,structure,zs,alpha,rho*1000)
-                
-                # #Build the entire path term
-                # G_P=(I_P*Q_P)/path_length_P
-                
-                #Get attenuation due to geometrical spreading (from the path length)
-                path_length_S=hfsims.get_path_length(directS,zs,dist_in_degs)
-                path_length_S=path_length_S*100 #to cm
-                
-                #Get effect of intrinsic aptimeenuation for that ray (path integrated)
-                Q_S=hfsims.get_attenuation(f,structure,directS,Qexp)
-                
-                #get quarter wavelength amplificationf actors
-                # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
-                I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
-                
-                #Build the entire path term
-                # G_S=(I_S*Q_S)/path_length_S
-                G_S=(1*Q_S)/path_length_S
-                
-                
 
-                #Get conically averaged radiation pattern terms
-                RP=hfsims.conically_avg_P_radiation_pattern(strike,dip,rake,azimuth,take_off_angle_P)
-                RP=abs(RP)
-                   
-                #Get partition of Pwave into Z and N,E components 
-                incidence_angle=directP.incident_angle
-                Npartition,Epartition,Zpartition=hfsims.get_P_wave_partition(incidence_angle,azimuth)
-                if component=='Z':
-                   Ppartition=Zpartition 
-                elif component=='N':
-                    Ppartition=Npartition
+                if Qmethod == 'all':
+                    P_paths = allP
                 else:
-                    Ppartition=Epartition
-                    
-                #And finally multiply everything together to get the subfault amplitude spectrum
-                AP=CP*S*G_S*P*RP*Ppartition           
+                    P_paths = [directP]
 
-                #Generate windowed time series
-                duration=1./fc_subfault+0.09*(dist/1000)
-                w=hfsims.windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
-                
-                #Go to frequency domain, apply amplitude spectrum and ifft for final time series
-                hf_seis_P=hfsims.apply_spectrum(w,AP,f,hf_dt)
-                
-                #save thigns to check
-                # if sta=='AL2H':
-                #     path_out = '/Users/dmelgarm/FakeQuakes/ONC_debug/analysis/frequency/Pwave/'
-                #     path_out = path_out+str(kfault)
-                #     # savetxt(path_out+'.all',c_[f,AP])
-                #     # savetxt(path_out+'.source',c_[f,CP*S])
-                #     # savetxt(path_out+'.path',c_[f,G_P])
-                #     # savetxt(path_out+'.site',c_[f,P])
-                
-                
-                #What time after OT should this time series start at?
-                time_insert=directP.path['time'][-1]+onset_times[kfault]
-                i=argmin(abs(t-time_insert))
-                j=i+len(hf_seis_P)
-                
-                #Check seismogram doesn't go past last sample
-                if i<len(hf)-1: #if i (the beginning of the seimogram) is less than the length
-                    if j>len(hf): #seismogram goes past total_duration length, trim it
-                        len_paste=len(hf)-i
-                        j=len(hf)
-                        #Add seismogram
-                        hf[i:j]=hf[i:j]+real(hf_seis_P[0:len_paste])
-                    else: #Lengths are fine
-                        hf[i:j]=hf[i:j]+real(hf_seis_P)      
-                else: #Seismogram starts after end of available space
-                    pass   
+                for directP in P_paths:
+
+                    take_off_angle_P=directP.takeoff_angle
+
+                    # #Get attenuation due to geometrical spreading (from the path length)
+                    # path_length_P=hfsims.get_path_length(directP,zs,dist_in_degs)
+                    # path_length_P=path_length_P*100 #to cm
+
+                    # #Get effect of intrinsic attenuation for that ray (path integrated)
+                    # #Q_P=hfsims.get_attenuation(f,structure,directP,Qexp,Qtype='P')   <- This causes problems and I don't know why underlying assumptions might be bad
+                    # Q_P=hfsims.get_attenuation(f,structure,directS,Qexp,Qtype='S')
+
+                    # #get quarter wavelength amplificationf actors
+                    # # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
+                    # I_P=hfsims.get_amplification_factors(f,structure,zs,alpha,rho*1000)
+
+                    # #Build the entire path term
+                    # G_P=(I_P*Q_P)/path_length_P
+
+                    #Get attenuation due to geometrical spreading (from the path length)
+                    path_length_S=hfsims.get_path_length(directP,zs,dist_in_degs)
+                    path_length_S=path_length_S*100 #to cm
+
+                    #Get effect of intrinsic aptimeenuation for that ray (path integrated)
+                    Q_S=hfsims.get_attenuation(f,structure,directP,Qexp)
+
+                    #get quarter wavelength amplificationf actors
+                    # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
+                    I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
+
+                    #Build the entire path term
+                    # G_S=(I_S*Q_S)/path_length_S
+                    G_S=(1*Q_S)/path_length_S
+
+
+
+                    #Get conically averaged radiation pattern terms
+                    RP=hfsims.conically_avg_P_radiation_pattern(strike,dip,rake,azimuth,take_off_angle_P)
+                    RP=abs(RP)
+
+                    #Get partition of Pwave into Z and N,E components
+                    incidence_angle=directP.incident_angle
+                    Npartition,Epartition,Zpartition=hfsims.get_P_wave_partition(incidence_angle,azimuth)
+                    if component=='Z':
+                       Ppartition=Zpartition
+                    elif component=='N':
+                        Ppartition=Npartition
+                    else:
+                        Ppartition=Epartition
+
+                    #And finally multiply everything together to get the subfault amplitude spectrum
+                    AP=CP*S*G_S*P*RP*Ppartition
+
+                    #Generate windowed time series
+                    duration=1./fc_subfault+0.09*(dist/1000)
+                    w=hfsims.windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
+
+                    #Go to frequency domain, apply amplitude spectrum and ifft for final time series
+                    hf_seis_P=hfsims.apply_spectrum(w,AP,f,hf_dt)
+
+                    #save thigns to check
+                    # if sta=='AL2H':
+                    #     path_out = '/Users/dmelgarm/FakeQuakes/ONC_debug/analysis/frequency/Pwave/'
+                    #     path_out = path_out+str(kfault)
+                    #     # savetxt(path_out+'.all',c_[f,AP])
+                    #     # savetxt(path_out+'.source',c_[f,CP*S])
+                    #     # savetxt(path_out+'.path',c_[f,G_P])
+                    #     # savetxt(path_out+'.site',c_[f,P])
+
+
+                    #What time after OT should this time series start at?
+                    time_insert=directP.path['time'][-1]+onset_times[kfault]
+                    i=argmin(abs(t-time_insert))
+                    j=i+len(hf_seis_P)
+
+                    #Check seismogram doesn't go past last sample
+                    if i<len(hf)-1: #if i (the beginning of the seimogram) is less than the length
+                        if j>len(hf): #seismogram goes past total_duration length, trim it
+                            len_paste=len(hf)-i
+                            j=len(hf)
+                            #Add seismogram
+                            hf[i:j]=hf[i:j]+real(hf_seis_P[0:len_paste])
+                        else: #Lengths are fine
+                            hf[i:j]=hf[i:j]+real(hf_seis_P)
+                    else: #Seismogram starts after end of available space
+                        pass
                 
                                            
                                                                   
@@ -473,77 +492,85 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
             #######         Use already built S ray from above           ######
 
             if Swave==True:
-                take_off_angle_S=directS.takeoff_angle
-                
-                #Get attenuation due to geometrical spreading (from the path length)
-                path_length_S=hfsims.get_path_length(directS,zs,dist_in_degs)
-                path_length_S=path_length_S*100 #to cm
-                
-                #Get effect of intrinsic aptimeenuation for that ray (path integrated)
-                if Qmethod == 'direct':#No ray tracing use bulka ttenuation along path
-                    Q_S = hfsims.get_attenuation_linear(f,structure,zs,dist,Qexp,Qtype='S')
-                else: #Use ray tracing
-                    Q_S = hfsims.get_attenuation(f,structure,directS,Qexp,scattering=scattering,
-                                               Qc_exp=Qc_exp,baseline_Qc=baseline_Qc)
-                
-                #get quarter wavelength amplificationf actors
-                # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
-                I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
-                
-                #Build the entire path term
-                G_S=(I_S*Q_S)/path_length_S
-                # G_S=(1*Q_S)/path_length_S
-    
-                #Get conically averaged radiation pattern terms
-                if component=='Z':
-                    RP_vert=hfsims.conically_avg_vert_radiation_pattern(strike,dip,rake,azimuth,take_off_angle_S)
-                    #And finally multiply everything together to get the subfault amplitude spectrum
-                    AS=CS*S*G_S*P*RP_vert   
-                    # print('... RP_vert = '+str(RP_vert))
+
+                if Qmethod == 'all':
+                    S_paths = allS
                 else:
-                    RP=hfsims.conically_avg_radiation_pattern(strike,dip,rake,azimuth,take_off_angle_S,component_angle)
-                    RP=abs(RP)
-                    # print('... RP_horiz = '+str(RP))
-                    #And finally multiply everything together to get the subfault amplitude spectrum
-                    AS=CS*S*G_S*P*RP                
-    
-                #Generate windowed time series
-                duration=1./fc_subfault+0.063*(dist/1000)
-                w=hfsims.windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
-                #w=windowed_gaussian(3*duration,hf_dt,window_type='cua',ptime=Ppaths[0].path['time'][-1],stime=Spaths[0].path['time'][-1])
-                
-                #Go to frequency domain, apply amplitude spectrum and ifft for final time series
-                hf_seis_S=hfsims.apply_spectrum(w,AS,f,hf_dt)
-                
-                #save thigns to check
-                # if sta=='AL2H':
-                #     path_out = '/Users/dmelgarm/FakeQuakes/ONC_debug/analysis/frequency/Swave/'
-                #     path_out = path_out+str(kfault)
-                #     # savetxt(path_out+'.soverp',c_[f,(CS*S)/(CP*S)])
-                #     savetxt(path_out+'.all',c_[f,AS])
-                #     savetxt(path_out+'.source',c_[f,CS*S])
-                #     savetxt(path_out+'.path',c_[f,G_S])
-                #     savetxt(path_out+'.site',c_[f,P])
-                
-                #What time after OT should this time series start at?
-                time_insert=directS.path['time'][-1]+onset_times[kfault]
-                #print 'ts = '+str(time_insert)+' , Td = '+str(duration)
-                #time_insert=Ppaths[0].path['time'][-1]
-                i=argmin(abs(t-time_insert))
-                j=i+len(hf_seis_S)
-                
-                
-                #Check seismogram doesn't go past last sample
-                if i<len(hf)-1: #if i (the beginning of the seimogram) is less than the length
-                    if j>len(hf): #seismogram goes past total_duration length, trim it
-                        len_paste=len(hf)-i
-                        j=len(hf)
-                        #Add seismogram
-                        hf[i:j]=hf[i:j]+real(hf_seis_S[0:len_paste])
-                    else: #Lengths are fine
-                        hf[i:j]=hf[i:j]+real(hf_seis_S)
-                else: #Beginning of seismogram is past end of available space
-                    pass
+                    S_paths = [directS]
+
+                for directS in S_paths:
+
+                    take_off_angle_S=directS.takeoff_angle
+
+                    #Get attenuation due to geometrical spreading (from the path length)
+                    path_length_S=hfsims.get_path_length(directS,zs,dist_in_degs)
+                    path_length_S=path_length_S*100 #to cm
+
+                    #Get effect of intrinsic aptimeenuation for that ray (path integrated)
+                    if Qmethod == 'direct':#No ray tracing use bulka ttenuation along path
+                        Q_S = hfsims.get_attenuation_linear(f,structure,zs,dist,Qexp,Qtype='S')
+                    else: #Use ray tracing
+                        Q_S = hfsims.get_attenuation(f,structure,directS,Qexp,scattering=scattering,
+                                                   Qc_exp=Qc_exp,baseline_Qc=baseline_Qc)
+
+                    #get quarter wavelength amplificationf actors
+                    # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
+                    I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
+
+                    #Build the entire path term
+                    G_S=(I_S*Q_S)/path_length_S
+                    # G_S=(1*Q_S)/path_length_S
+
+                    #Get conically averaged radiation pattern terms
+                    if component=='Z':
+                        RP_vert=hfsims.conically_avg_vert_radiation_pattern(strike,dip,rake,azimuth,take_off_angle_S)
+                        #And finally multiply everything together to get the subfault amplitude spectrum
+                        AS=CS*S*G_S*P*RP_vert
+                        # print('... RP_vert = '+str(RP_vert))
+                    else:
+                        RP=hfsims.conically_avg_radiation_pattern(strike,dip,rake,azimuth,take_off_angle_S,component_angle)
+                        RP=abs(RP)
+                        # print('... RP_horiz = '+str(RP))
+                        #And finally multiply everything together to get the subfault amplitude spectrum
+                        AS=CS*S*G_S*P*RP
+
+                    #Generate windowed time series
+                    duration=1./fc_subfault+0.063*(dist/1000)
+                    w=hfsims.windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
+                    #w=windowed_gaussian(3*duration,hf_dt,window_type='cua',ptime=Ppaths[0].path['time'][-1],stime=Spaths[0].path['time'][-1])
+
+                    #Go to frequency domain, apply amplitude spectrum and ifft for final time series
+                    hf_seis_S=hfsims.apply_spectrum(w,AS,f,hf_dt)
+
+                    #save thigns to check
+                    # if sta=='AL2H':
+                    #     path_out = '/Users/dmelgarm/FakeQuakes/ONC_debug/analysis/frequency/Swave/'
+                    #     path_out = path_out+str(kfault)
+                    #     # savetxt(path_out+'.soverp',c_[f,(CS*S)/(CP*S)])
+                    #     savetxt(path_out+'.all',c_[f,AS])
+                    #     savetxt(path_out+'.source',c_[f,CS*S])
+                    #     savetxt(path_out+'.path',c_[f,G_S])
+                    #     savetxt(path_out+'.site',c_[f,P])
+
+                    #What time after OT should this time series start at?
+                    time_insert=directS.path['time'][-1]+onset_times[kfault]
+                    #print 'ts = '+str(time_insert)+' , Td = '+str(duration)
+                    #time_insert=Ppaths[0].path['time'][-1]
+                    i=argmin(abs(t-time_insert))
+                    j=i+len(hf_seis_S)
+
+
+                    #Check seismogram doesn't go past last sample
+                    if i<len(hf)-1: #if i (the beginning of the seimogram) is less than the length
+                        if j>len(hf): #seismogram goes past total_duration length, trim it
+                            len_paste=len(hf)-i
+                            j=len(hf)
+                            #Add seismogram
+                            hf[i:j]=hf[i:j]+real(hf_seis_S[0:len_paste])
+                        else: #Lengths are fine
+                            hf[i:j]=hf[i:j]+real(hf_seis_S)
+                    else: #Beginning of seismogram is past end of available space
+                        pass
 
             
             
