@@ -5,7 +5,7 @@ Module for high frequency simulations in parallel
 def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,component,model_name,
                         rise_time_depths0,rise_time_depths1,moho_depth_in_km,total_duration,
                         hf_dt,stress_parameter,kappa,Qexp,Pwave,Swave,high_stress_depth,
-                        Qmethod,scattering,Qc_exp,baseline_Qc,rank,size): 
+                        Qmethod,scattering,Qc_exp,baseline_Qc,rank,size,window_type):
     '''
     Run stochastic HF sims
     
@@ -53,9 +53,10 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
         scattering = %s
         Qc_exp = %s
         baseline_Qc = %s
+        windowtype = %s
         '''%(home,project_name,rupture_name,str(N),str(M0/1e7),sta,str(sta_lon),str(sta_lat),model_name,str([rise_time_depths0,rise_time_depths1]),
         str(moho_depth_in_km),str(total_duration),str(hf_dt),str(stress_parameter),str(kappa),str(Qexp),str(component),str(Pwave),str(Swave),
-        str(high_stress_depth),str(Qmethod),str(scattering),str(Qc_exp),str(baseline_Qc))
+        str(high_stress_depth),str(Qmethod),str(scattering),str(Qc_exp),str(baseline_Qc),str(window_type))
         print(out)
 
     if rank==0:
@@ -86,9 +87,10 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
     
     #load velocity structure
     structure=genfromtxt(home+project_name+'/structure/'+model_name)
+    vs30 = hfsims.get_vs30(structure)
     
     #Frequencies vector
-    f=logspace(log10(1/total_duration),log10(1/(2*hf_dt))+0.01,100)
+    f=logspace(log10(1/total_duration),log10(1/(2*hf_dt))+0.01,800)
     omega=2*pi*f
     
     #Output time vector (0 is origin time)
@@ -367,6 +369,18 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                 # get all P arriving paths
                 allP = [p for p in selected_paths if p.name.lower().endswith('p')]
 
+            elif Qmethod == 'shallowest_p_cua':
+                                
+                #get turning depths and arrival times of S rays
+                turning_depths = zeros(len(Ppaths))
+                
+                for kray in range(len(Ppaths)):
+                    turning_depths[kray] = Ppaths[kray].path['depth'].max()
+
+                i_min_depth = argmin(turning_depths)
+                directP = Ppaths[i_min_depth]
+
+
             
             #directS=Spaths[0]  #this is the old way, kept fastest S
             mohoS=None
@@ -418,19 +432,19 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                     # G_P=(I_P*Q_P)/path_length_P
 
                     #Get attenuation due to geometrical spreading (from the path length)
-                    path_length_S=hfsims.get_path_length(directP,zs,dist_in_degs)
-                    path_length_S=path_length_S*100 #to cm
+                    path_length_P=hfsims.get_path_length(directP,zs,dist_in_degs)
+                    path_length_P=path_length_P*100 #to cm
 
                     #Get effect of intrinsic aptimeenuation for that ray (path integrated)
-                    Q_S=hfsims.get_attenuation(f,structure,directP,Qexp)
+                    Q_S=hfsims.get_attenuation(f,structure,directP,Qexp,Qtype='P')
 
                     #get quarter wavelength amplificationf actors
                     # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
                     I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
 
                     #Build the entire path term
-                    # G_S=(I_S*Q_S)/path_length_S
-                    G_S=(1*Q_S)/path_length_S
+                    # G_S=(I_S*Q_S)/path_length_P
+                    G_S=(1*Q_S)/path_length_P
 
 
 
@@ -453,10 +467,37 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
 
                     #Generate windowed time series
                     duration=1./fc_subfault+0.09*(dist/1000)
-                    w=hfsims.windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
-
+                    if window_type == 'saragoni_hart':
+                        w=hfsims.windowed_gaussian(duration,hf_dt,window_type=window_type) # 'saragoni_hart, cua, None
+                    elif window_type == 'cua':
+                        # assumption here is that acceleration timeseries are made and that these are soft soil locations.
+                        # Hard rock would be 6,18,0,12, Maybe add this as option for later on. Amplitudes of cua2009 are 
+                        # not taken into account. As they are taken from Graves&Pitarka2015/2010.
+                        if component=='Z':
+                            # for site location with a NEHRP site class BC and above: ROCK
+                            if vs30 >=575:
+                                Pcoeff=6
+                                Scoeff=18
+                            # for site location with a NEHRP site class C and below: SOFT SOIL
+                            elif vs30 <575:
+                                Pcoeff=7
+                                Scoeff=19
+                        elif component in ['N','E']:
+                            # for site location with a NEHRP site class BC and above: ROCK
+                            if vs30 >=575:
+                                Pcoeff=0
+                                Scoeff=12
+                            # for site location with a NEHRP site class C and below: SOFT SOIL
+                            elif vs30 <575:
+                                Pcoeff=1
+                                Scoeff=13
+                        w_p,w_s=hfsims.windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                                                         Pcoeff=Pcoeff,Scoeff=Scoeff)
+                        w = w_p
                     #Go to frequency domain, apply amplitude spectrum and ifft for final time series
                     hf_seis_P=hfsims.apply_spectrum(w,AP,f,hf_dt)
+
+
 
                     #save thigns to check
                     # if sta=='AL2H':
@@ -492,6 +533,8 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
             #######         Use already built S ray from above           ######
 
             if Swave==True:
+                if Qmethod == 'shallowest_p_cua':
+                    continue  #Skip S wave calculation if shallowest P method is used
 
                 if Qmethod == 'all':
                     S_paths = allS
@@ -536,8 +579,21 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
 
                     #Generate windowed time series
                     duration=1./fc_subfault+0.063*(dist/1000)
-                    w=hfsims.windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
-                    #w=windowed_gaussian(3*duration,hf_dt,window_type='cua',ptime=Ppaths[0].path['time'][-1],stime=Spaths[0].path['time'][-1])
+                    if window_type == 'saragoni_hart':
+                        w=hfsims.windowed_gaussian(duration,hf_dt,window_type=window_type) # 'saragoni_hart, cua, None
+                    elif window_type == 'cua':
+                        # assumption here is that acceleration timeseries are made and that these are soft soil locations.
+                        # Hard rock would be 6,18,0,12, Maybe add this as option for later on. Amplitudes of cua2009 are 
+                        # not taken into account. As they are taken from Graves&Pitarka2015/2010.
+                        if component=='Z':
+                            Pcoeff=7
+                            Scoeff=19
+                        elif component in ['N','E']:
+                            Pcoeff=1
+                            Scoeff=13
+                        w_p,w_s=hfsims.windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                                                         Pcoeff=Pcoeff,Scoeff=Scoeff)
+                        w = w_s
 
                     #Go to frequency domain, apply amplitude spectrum and ifft for final time series
                     hf_seis_S=hfsims.apply_spectrum(w,AS,f,hf_dt)
@@ -572,8 +628,44 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                     else: #Beginning of seismogram is past end of available space
                         pass
 
+
+
+            if Qmethod == 'all':
+                P_paths = allP
+                S_paths = allS
+            else:
+                P_paths = [directP]
+                S_paths = [directS]
             
-            
+            # print arrival times
+            allP_sorted = sorted(P_paths, key=lambda x: x.time)
+            allS_sorted = sorted(S_paths, key=lambda x: x.time)
+
+            firstP = allP_sorted[0].time if allP_sorted else None
+            firstS = allS_sorted[0].time if allS_sorted else None
+
+
+            # LOGFILE for arrivals
+            import os
+
+            log_dir = home + project_name + '/logs/' + rupture_name + '/'
+            os.makedirs(log_dir, exist_ok=True)
+
+            log_file = os.path.join(log_dir, f"arrivaltimes.log")
+
+            # write header only if file does not exist yet
+            write_header = not os.path.exists(log_file)
+
+            with open(log_file, "a") as f:
+                if write_header:
+                    f.write("station\tP_arrival_s\tS_arrival_s\n")
+
+                f.write(
+                    f"{sta}\t"
+                    f"{'' if firstP is None else f'{firstP:.6f}'}\t"
+                    f"{'' if firstS is None else f'{firstS:.6f}'}\n"
+                )
+
             #######         Build Moho reflected S ray           ######
 #            if mohoS==None:
 #                pass
@@ -684,10 +776,11 @@ if __name__ == '__main__':
         scattering=sys.argv[24]
         Qc_exp=float(sys.argv[25])
         baseline_Qc=float(sys.argv[26])
+        window_type=sys.argv[27]
         run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,component,model_name,
                             rise_time_depths0,rise_time_depths1,moho_depth_in_km,total_duration,hf_dt,
                             stress_parameter,kappa,Qexp,Pwave,Swave,high_stress_depth,Qmethod,scattering,
-                            Qc_exp,baseline_Qc,rank,size)
+                            Qc_exp,baseline_Qc,rank,size,window_type)
     else:
         print("ERROR: You're not allowed to run "+sys.argv[1]+" from the shell or it does not exist")
         
