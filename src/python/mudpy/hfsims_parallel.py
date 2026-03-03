@@ -216,9 +216,6 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
             fc_scale=(M0)/(N*stress*dl**3*1e21) #Frankel scaling
             small_event_M0 = stress*dl**3*1e21
             
-        
-
-            
             #Get rho, alpha, beta at subfault depth
             zs=fault[kfault,3]
             mu,alpha,beta=get_mu(structure,zs,return_speeds=True)
@@ -436,15 +433,15 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                     path_length_P=path_length_P*100 #to cm
 
                     #Get effect of intrinsic aptimeenuation for that ray (path integrated)
-                    Q_S=hfsims.get_attenuation(f,structure,directP,Qexp,Qtype='P')
+                    Q_P=hfsims.get_attenuation(f,structure,directP,Qexp,Qtype='P')
 
                     #get quarter wavelength amplificationf actors
                     # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
                     I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
 
                     #Build the entire path term
-                    # G_S=(I_S*Q_S)/path_length_P
-                    G_S=(1*Q_S)/path_length_P
+                    # G_S=(I_S*Q_P)/path_length_P
+                    G_S=(1*Q_P)/path_length_P
 
 
 
@@ -491,7 +488,7 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                             elif vs30 <575:
                                 Pcoeff=1
                                 Scoeff=13
-                        w_p,w_s=hfsims.windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                        w_p,w_s=hfsims.windowed_gaussian(3*duration,hf_dt,window_type=window_type,M=Mw,dist_in_km=dist/1000,
                                                          Pcoeff=Pcoeff,Scoeff=Scoeff)
                         w = w_p
                     #Go to frequency domain, apply amplitude spectrum and ifft for final time series
@@ -586,17 +583,31 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                         # Hard rock would be 6,18,0,12, Maybe add this as option for later on. Amplitudes of cua2009 are 
                         # not taken into account. As they are taken from Graves&Pitarka2015/2010.
                         if component=='Z':
-                            Pcoeff=7
-                            Scoeff=19
+                            # for site location with a NEHRP site class BC and above: ROCK
+                            if vs30 >=575:
+                                Pcoeff=6
+                                Scoeff=18
+                            # for site location with a NEHRP site class C and below: SOFT SOIL
+                            elif vs30 <575:
+                                Pcoeff=7
+                                Scoeff=19
                         elif component in ['N','E']:
-                            Pcoeff=1
-                            Scoeff=13
+                            # for site location with a NEHRP site class BC and above: ROCK
+                            if vs30 >=575:
+                                Pcoeff=0
+                                Scoeff=12
+                            # for site location with a NEHRP site class C and below: SOFT SOIL
+                            elif vs30 <575:
+                                Pcoeff=1
+                                Scoeff=13
                         w_p,w_s=hfsims.windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
                                                          Pcoeff=Pcoeff,Scoeff=Scoeff)
-                        w = w_s
+                        w = w_s #remove any DC component
+
 
                     #Go to frequency domain, apply amplitude spectrum and ifft for final time series
                     hf_seis_S=hfsims.apply_spectrum(w,AS,f,hf_dt)
+
 
                     #save thigns to check
                     # if sta=='AL2H':
