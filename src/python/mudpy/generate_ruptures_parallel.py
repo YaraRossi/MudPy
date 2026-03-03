@@ -63,7 +63,7 @@ def run_parallel_generate_ruptures(home,project_name,run_name,fault_name,slab_na
     vel_mod_file=home+project_name+'/structure/'+model_name
     
     #Get TauPyModel
-    velmod = TauPyModel(model=home+project_name+'/structure/'+model_name.split('.')[0])
+    velmod = TauPyModel(model=home+project_name+'/structure/'+model_name.split('.')[0]+'.npz')
     
     # Define the subfault hypocenter (if hypocenter is prescribed)
     if hypocenter is None:

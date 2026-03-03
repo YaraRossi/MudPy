@@ -451,7 +451,8 @@ def makeG(home,project_name,fault_name,model_name,station_file,gftype,tsunami,td
                         Nds+=read(syn_path+staname[ksta]+'.'+nfault+'.DS.'+vord+'.n')
                         Zds+=read(syn_path+staname[ksta]+'.'+nfault+'.DS.'+vord+'.z')
                     #Perform operations that need to only happen once (filtering and decimation)
-                    if any(BP!=None):# or ksta==1: #Apply filter to GFs
+                    #if any(BP!=None):# or ksta==1: #Apply filter to GFs
+                    if BP is not None:
                         if kfault==0:
                             print('Bandpassing on frequency band:')
                             print('... '+str(BP))
