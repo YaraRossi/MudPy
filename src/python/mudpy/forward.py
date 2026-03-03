@@ -3119,6 +3119,7 @@ def makefault(fout,strike,dip,nstrike,dx_dip,dx_strike,epicenter,num_updip,num_d
     #Quadrant correction
     #Now horizontal distances
     d=((x**2+y**2)**0.5)*1000
+    zunique=unique(z)
     #Now reckon
     lo=zeros(len(d))
     la=zeros(len(d))
@@ -3127,13 +3128,12 @@ def makefault(fout,strike,dip,nstrike,dx_dip,dx_strike,epicenter,num_updip,num_d
             print('Point on epicenter')
             lo[k]=epicenter[0]
             la[k]=epicenter[1]
-        #elif len(zunique)==1: #Only one depth, no need to sort later
-        #    lo[k]=epicenter[0]
-        #    la[k]=epicenter[1]
+        elif len(zunique)==1: # only one patch, so set lat lon to epicenter input.
+            lo[k]=epicenter[0]
+            la[k]=epicenter[1]
         else:
             lo[k],la[k],ba=g.fwd(epicenter[0],epicenter[1],az[k],d[k]) 
     #Sort them from top right to left along dip
-    zunique=unique(z)
     for k in range(len(zunique)):
         i=where(z==zunique[k])[0] #This finds all faults at a certain depth
         isort=argsort(la[i]) #This sorths them south to north
