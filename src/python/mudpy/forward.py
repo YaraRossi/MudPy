@@ -778,7 +778,7 @@ def hf_waveforms(home,project_name,fault_name,rupture_list,GF_list,model_name,ru
                 make_parallel_hfsims(home,project_name,rupture_name,ncpus,sta[ksta],sta_lon[ksta],sta_lat[ksta],
                     comp[kcomp],model_name,rise_time_depths[0],rise_time_depths[1],moho_depth_in_km,total_duration=duration,hf_dt=hf_dt,
                     Pwave=Pwave,Swave=Swave,stress_parameter=stress_parameter,high_stress_depth=high_stress_depth,Qexp=Qexp,
-                    Qmethod=Qmethod,scattering=scattering,Qc_exp=Qc_exp,baseline_Qc=baseline_Qc,window_type=window_type)
+                    Qmethod=Qmethod,scattering=scattering,kappa=kappa,Qc_exp=Qc_exp,baseline_Qc=baseline_Qc,window_type=window_type)
 
                 #Combine the separate MPI outputs into one full waveform
                 write_parallel_hfsims(home,project_name,rupture_name,sta[ksta],comp[kcomp],remove=True)
