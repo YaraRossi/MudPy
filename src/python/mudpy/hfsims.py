@@ -1,6 +1,6 @@
 def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,component,model_name,
         rise_time_depths,moho_depth_in_km,total_duration=100,hf_dt=0.01,stress_parameter=50,
-        kappa=0.04,Qexp=0.6,Pwave=False,Swave=True,high_stress_depth=1e4,window_type='saragoni_hart'):
+        kappa=0.04,Qexp=0.6,Pwave=False,Swave=True,high_stress_depth=1e4,window_type='saragoni_hart',source_scaling='frankel'):
     '''
     Run stochastic HF sims
     
@@ -63,7 +63,7 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
     vs30 = get_vs30(structure)
     
     #Frequencies vector
-    f=logspace(log10(hf_dt),log10(1/(2*hf_dt))+0.01,50)
+    f=logspace(log10(1/total_duration),log10(1/(2*hf_dt))+0.01,800)
     omega=2*pi*f
     
     #Output time vector (0 is origin time)
@@ -128,17 +128,17 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
 #    earliestP=1e10  #something outrageously high
 #    earliestP_kfault=1e10
     for kfault in range(len(fault)):
-        
-        #Print status to screen            
-        if kfault % 150 == 0:
-            if kfault==0:
-                stdout.write('      [')
+        if rank==0:
+            #Print status to screen            
+            if kfault % 150 == 0: # why is this different in run_parallel_hfsims?
+                if kfault==0:
+                    stdout.write('      [')
+                    stdout.flush()
+                stdout.write('.')
                 stdout.flush()
-            stdout.write('.')
-            stdout.flush()
-        if kfault==len(fault)-1:
-            stdout.write(']\n')
-            stdout.flush()                
+            if kfault==len(fault)-1:
+                stdout.write(']\n')
+                stdout.flush()                
         
         #Include only subfaults with non-zero slip
         if subfault_M0[kfault]>0:
@@ -181,15 +181,7 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
             #    stress=stress_parameter*stress_multiplier
             #else:
             #    stress=stress_parameter
-            
-            # Frankel 95 scaling of corner frequency #verified this looks the same in GP
-            # Right now this applies the same factor to all faults
-            fc_scale=(M0)/(N*stress*dl**3*1e21) #Frankel scaling
-            small_event_M0 = stress*dl**3*1e21
-            
-        
 
-            
             #Get rho, alpha, beta at subfault depth
             zs=fault[kfault,3]
             mu,alpha,beta=get_mu(structure,zs,return_speeds=True)
@@ -203,28 +195,60 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                 component_angle=90
             
             rho=rho/1000 #to g/cm**3
-            beta=(beta/1000)*1e5 #to cm/s
-            alpha=(alpha/1000)*1e5
+            beta_cms=(beta/1000)*1e5 #to cm/s
+            alpha_cms=(alpha/1000)*1e5
             
             #Verified this produces same value as in GP
-            CS=(2*Spartition)/(4*pi*(rho)*(beta**3))
-            CP=2/(4*pi*(rho)*(alpha**3))
+            CS=(2*Spartition)/(4*pi*(rho)*(beta_cms**3))
+            CP=2/(4*pi*(rho)*(alpha_cms**3))
             
             #Get local subfault rupture speed
-            beta=beta/100 #to m/s
-            vr=get_local_rupture_speed(zs,beta,rise_time_depths)
-            vr=vr/1000 #to km/s
+            beta_ms=beta_cms/100 #to m/s
+            alpha_ms=alpha_cms/100 #to m/s
+            vr_ms=get_local_rupture_speed(zs,beta_ms,rise_time_depths)
+            vr_kms=vr_ms/1000 #to km/s
             dip_factor=get_dip_factor(fault[kfault,5],fault[kfault,8],fault[kfault,9])
+            if source_scaling == 'frankel':
+                # Frankel 95 scaling of corner frequency #verified this looks the same in GP
+                # Right now this applies the same factor to all faults
+                fc_scale=(M0)/(N*stress*dl**3*1e21) #Frankel scaling
+                small_event_M0 = stress*dl**3*1e21
+
+                #Subfault corner frequency
+                c0=2.0 #GP2015 value
+                fc_subfault=(c0*vr_kms)/(dip_factor*pi*dl)
+                
+                #get subfault source spectrum
+                #S=((relative_subfault_M0[kfault]*M0/N)*f**2)/(1+fc_scale*(f/fc_subfault)**2)
+                S=small_event_M0*(omega**2/(1+(f/fc_subfault)**2))
+                frankel_conv_operator= fc_scale*((fc_subfault**2+f**2)/(fc_subfault**2+fc_scale*f**2))
+                S=S*frankel_conv_operator
             
-            #Subfault corner frequency
-            c0=2.0 #GP2015 value
-            fc_subfault=(c0*vr)/(dip_factor*pi*dl)
+            elif source_scaling == 'brune':
+                # Convert stress drop from bar to dyne/cm^2
+                # 1 bar = 1e6 dyne/cm^2
+                delta_sigma = stress * 1e6
+
+                # Patch moment (dyne-cm)
+                M0_patch = subfault_M0[kfault]
+
+                # Brune source radius (cm)
+                # r = (7 M0 / 16 Δσ)^(1/3)
+                r = ((7.0 * M0_patch) / (16.0 * delta_sigma)) ** (1.0/3.0)
+
+                # Brune corner frequency
+                # fc = 0.37 * beta / r
+                fc_subfault = 0.37 * beta_cms / r
+
+                # Brune omega^2 source spectrum
+                S = M0_patch * (omega**2/(1+(f/fc_subfault)**2))
+
+            else:
+                print('ERROR: source_scaling must be either "frankel" or "brune"')
+                exit()
             
-            #get subfault source spectrum
-            #S=((relative_subfault_M0[kfault]*M0/N)*f**2)/(1+fc_scale*(f/fc_subfault)**2)
-            S=small_event_M0*(omega**2/(1+(f/fc_subfault)**2))
-            frankel_conv_operator= fc_scale*((fc_subfault**2+f**2)/(fc_subfault**2+fc_scale*f**2))
-            S=S*frankel_conv_operator
+
+            
             
             #get high frequency decay
             P=exp(-pi*kappa*f)
@@ -316,7 +340,7 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                 
                 #get quarter wavelength amplificationf actors
                 # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
-                I_P=get_amplification_factors(f,structure,zs,alpha,rho*1000)
+                I_P=get_amplification_factors(f,structure,zs,alpha_ms,rho*1000)
             
                 #Build the entire path term
                 G_P=(I_P*Q_P)/path_length_P
@@ -408,7 +432,8 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                 
                 #get quarter wavelength amplificationf actors
                 # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
-                I_S=get_amplification_factors(f,structure,zs,beta,rho*1000)
+                I_S=get_amplification_factors(f,structure,zs,beta_ms,rho*1000)
+
                 #Build the entire path term
                 G_S=(I_S*Q_S)/path_length_S
     
