@@ -346,6 +346,8 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                     # Amplitudes of cua2009 are not taken into account, 
                     # as they are taken from Graves&Pitarka2015/2010.
                     if component=='Z':
+                        p_scale=0.2
+                        s_scale=1
                         # for site location with a NEHRP site class BC and above: ROCK
                         if vs30 >=575:
                             Pcoeff=6
@@ -355,6 +357,8 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                             Pcoeff=7
                             Scoeff=19
                     elif component in ['N','E']:
+                        p_scale=0.25
+                        s_scale=0.1
                         # for site location with a NEHRP site class BC and above: ROCK
                         if vs30 >=575:
                             Pcoeff=0
@@ -363,8 +367,8 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                         elif vs30 <575:
                             Pcoeff=1
                             Scoeff=13
-                    w_p,w_s=windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
-                                                        Pcoeff=Pcoeff,Scoeff=Scoeff)
+                    w_p,w_s=windowed_gaussian(10*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                                                        Pcoeff=Pcoeff,Scoeff=Scoeff, p_scale=p_scale, s_scale=s_scale)
                     w = w_p-w_p.mean()
                 
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
@@ -434,6 +438,8 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                     # Hard rock would be 6,18,0,12, Maybe add this as option for later on. Amplitudes of cua2009 are 
                     # not taken into account. As they are taken from Graves&Pitarka2015/2010.
                     if component=='Z':
+                        p_scale=0.2
+                        s_scale=1
                         # for site location with a NEHRP site class BC and above: ROCK
                         if vs30 >=575:
                             Pcoeff=6
@@ -441,8 +447,10 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                         # for site location with a NEHRP site class C and below: SOFT SOIL
                         elif vs30 <575:
                             Pcoeff=7
-                            Scoeff=19
+                            Scoeff=19 
                     elif component in ['N','E']:
+                        p_scale=0.25
+                        s_scale=0.1
                         # for site location with a NEHRP site class BC and above: ROCK
                         if vs30 >=575:
                             Pcoeff=0
@@ -451,8 +459,8 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                         elif vs30 <575:
                             Pcoeff=1
                             Scoeff=13
-                    w_p,w_s=windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
-                                                        Pcoeff=Pcoeff,Scoeff=Scoeff)
+                    w_p,w_s=windowed_gaussian(10*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                                                        Pcoeff=Pcoeff,Scoeff=Scoeff, p_scale=p_scale, s_scale=s_scale)
                     w = w_s-w_s.mean()
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
                 hf_seis_S=apply_spectrum(w,AS,f,hf_dt)
@@ -855,7 +863,7 @@ def get_attenuation_linear(f,structure,zs,dist,Qexp,Qtype='S',scattering='on',Qc
 
 
 
-def windowed_gaussian(duration,hf_dt,window_type='saragoni_hart',M=5.0,dist_in_km=50.,std=1.0,ptime=10,stime=20,Pcoeff=0,Scoeff=12):
+def windowed_gaussian(duration,hf_dt,window_type='saragoni_hart',M=5.0,dist_in_km=50.,std=1.0,ptime=10,stime=20,Pcoeff=0,Scoeff=12, p_scale=1, s_scale=1):
     '''
     Get a gaussian white noise time series and window it
     '''
@@ -886,7 +894,7 @@ def windowed_gaussian(duration,hf_dt,window_type='saragoni_hart',M=5.0,dist_in_k
         ptime=0
         stime=0
         window_p,window_s=cua_envelope_smooth(M,dist_in_km,t,ptime,stime,Pcoeff=Pcoeff,Scoeff=Scoeff,
-                                                p_scale=0.25, s_scale=0.1, decay_scale=2)
+                                                p_scale=p_scale, s_scale=s_scale, decay_scale=2)
 
         noise=[noise*window_p,noise*window_s]        
         noise[0] = noise[0] - noise[0].mean()
@@ -938,7 +946,8 @@ def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5, is_cua = False
     phase=angle(fourier)
     
     #resample model amplitude spectr to frequencies
-    interp=interp1d(f,A,bounds_error=False)
+    # bounds_error=False allows extrapolation; use fill_value=0 to avoid NaN at extreme frequencies
+    interp=interp1d(f,A,bounds_error=False,fill_value=0.0,kind='linear')
     amplitude_positive=interp(positive_freq)
     
     #Place in correct order A[0] is DC value then icnreasing positive freq then decreasing negative freq

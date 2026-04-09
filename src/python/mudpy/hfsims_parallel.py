@@ -471,6 +471,8 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                         # Hard rock would be 6,18,0,12, Maybe add this as option for later on. Amplitudes of cua2009 are 
                         # not taken into account. As they are taken from Graves&Pitarka2015/2010.
                         if component=='Z':
+                            p_scale=0.25 # 0.2
+                            s_scale=0.1 # 1
                             # for site location with a NEHRP site class BC and above: ROCK
                             if vs30 >=575:
                                 Pcoeff=6
@@ -480,6 +482,8 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                                 Pcoeff=7
                                 Scoeff=19
                         elif component in ['N','E']:
+                            p_scale=0.25
+                            s_scale=0.1
                             # for site location with a NEHRP site class BC and above: ROCK
                             if vs30 >=575:
                                 Pcoeff=0
@@ -583,6 +587,8 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                         # Hard rock would be 6,18,0,12, Maybe add this as option for later on. Amplitudes of cua2009 are 
                         # not taken into account. As they are taken from Graves&Pitarka2015/2010.
                         if component=='Z':
+                            p_scale=0.25 # 0.2
+                            s_scale=0.1 # 1
                             # for site location with a NEHRP site class BC and above: ROCK
                             if vs30 >=575:
                                 Pcoeff=6
@@ -592,6 +598,8 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                                 Pcoeff=7
                                 Scoeff=19
                         elif component in ['N','E']:
+                            p_scale=0.25
+                            s_scale=0.1
                             # for site location with a NEHRP site class BC and above: ROCK
                             if vs30 >=575:
                                 Pcoeff=0
