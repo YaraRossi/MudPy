@@ -440,8 +440,8 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                     I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
 
                     #Build the entire path term
-                    # G_S=(I_S*Q_P)/path_length_P
-                    G_S=(1*Q_P)/path_length_P
+                    G_S=(I_S*Q_P)/path_length_P
+                    #G_S=(1*Q_P)/path_length_P
 
 
 
