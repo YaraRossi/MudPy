@@ -492,8 +492,15 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                             elif vs30 <575:
                                 Pcoeff=1
                                 Scoeff=13
-                        w_p,w_s=hfsims.windowed_gaussian(3*duration,hf_dt,window_type=window_type,M=Mw,dist_in_km=dist/1000,
-                                                         Pcoeff=Pcoeff,Scoeff=Scoeff)
+                        w_p,w_s=hfsims.windowed_gaussian(10*duration,hf_dt,window_type=window_type,M=Mw,dist_in_km=dist/1000,
+                                                         Pcoeff=Pcoeff,Scoeff=Scoeff, p_scale=p_scale, s_scale=s_scale)
+                        # Slice window back to original duration to keep amplitude consistent
+                        # (envelope generation benefits from 3x length, but final seismogram should use physical duration)
+                        num_samples_duration = int(duration/hf_dt)
+                        if num_samples_duration % 2 == 0:
+                            num_samples_duration += 1
+                        w_p = w_p[:num_samples_duration]
+                        w_s = w_s[:num_samples_duration]
                         w = w_p
                     #Go to frequency domain, apply amplitude spectrum and ifft for final time series
                     hf_seis_P=hfsims.apply_spectrum(w,AP,f,hf_dt)
@@ -608,8 +615,14 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                             elif vs30 <575:
                                 Pcoeff=1
                                 Scoeff=13
-                        w_p,w_s=hfsims.windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
-                                                         Pcoeff=Pcoeff,Scoeff=Scoeff)
+                        w_p,w_s=hfsims.windowed_gaussian(10*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                                                         Pcoeff=Pcoeff,Scoeff=Scoeff, p_scale=p_scale, s_scale=s_scale)
+                        # Slice window back to original duration to keep amplitude consistent
+                        num_samples_duration = int(duration/hf_dt)
+                        if num_samples_duration % 2 == 0:
+                            num_samples_duration += 1
+                        w_p = w_p[:num_samples_duration]
+                        w_s = w_s[:num_samples_duration]
                         w = w_s #remove any DC component
 
 
