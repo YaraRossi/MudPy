@@ -258,7 +258,8 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
             S=S*frankel_conv_operator
             
             #get high frequency decay
-            P=exp(-pi*kappa*f)
+            kappa_dist = 0.00125 * dist_in_km + 0.0375
+            P=exp(-pi*kappa_dist*f)
             
             
             #Get other geometric parameters necessar for radiation pattern
