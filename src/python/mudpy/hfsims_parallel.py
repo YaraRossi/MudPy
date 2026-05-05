@@ -5,7 +5,7 @@ Module for high frequency simulations in parallel
 def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,component,model_name,
                         rise_time_depths0,rise_time_depths1,moho_depth_in_km,total_duration,
                         hf_dt,stress_parameter,kappa,Qexp,Pwave,Swave,high_stress_depth,
-                        Qmethod,scattering,Qc_exp,baseline_Qc,rank,size,window_type):
+                        Qmethod,scattering,Qc_exp,baseline_Qc,rank,size,window_type,source_scaling):
     '''
     Run stochastic HF sims
     
@@ -54,9 +54,10 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
         Qc_exp = %s
         baseline_Qc = %s
         windowtype = %s
+        source_scaling = %s
         '''%(home,project_name,rupture_name,str(N),str(M0/1e7),sta,str(sta_lon),str(sta_lat),model_name,str([rise_time_depths0,rise_time_depths1]),
         str(moho_depth_in_km),str(total_duration),str(hf_dt),str(stress_parameter),str(kappa),str(Qexp),str(component),str(Pwave),str(Swave),
-        str(high_stress_depth),str(Qmethod),str(scattering),str(Qc_exp),str(baseline_Qc),str(window_type))
+        str(high_stress_depth),str(Qmethod),str(scattering),str(Qc_exp),str(baseline_Qc),str(window_type),str( source_scaling))
         print(out)
 
     if rank==0:
@@ -111,11 +112,13 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
     slip=(fault[:,8]**2+fault[:,9]**2)**0.5
     subfault_M0=slip*fault[:,10]*fault[:,11]*fault[:,13]
     subfault_M0=subfault_M0*1e7 #to dyne-cm
+    #M0=subfault_M0.sum()
     relative_subfault_M0=subfault_M0/M0
     Mw=(2./3)*(log10(M0*1e-7)-9.1)
     
     #Corner frequency scaling
     i=where(slip>0)[0] #Non-zero faults
+    #N=len(i) #number of subfaults
     dl=mean((fault[:,10]+fault[:,11])/2) #predominant length scale
     dl=dl/1000 # to km
     
@@ -123,7 +126,7 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
     tau_perturb=0.1
     
     #Deep faults receive a higher stress
-    stress_multiplier=1
+    stress_multiplier=3
 
     #initalize output seismogram
     tr=Trace()
@@ -211,10 +214,7 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
             #else:
             #    stress=stress_parameter
             
-            # Frankel 95 scaling of corner frequency #verified this looks the same in GP
-            # Right now this applies the same factor to all faults
-            fc_scale=(M0)/(N*stress*dl**3*1e21) #Frankel scaling
-            small_event_M0 = stress*dl**3*1e21
+            
             
             #Get rho, alpha, beta at subfault depth
             zs=fault[kfault,3]
@@ -229,34 +229,83 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                 component_angle=90
             
             rho=rho/1000 #to g/cm**3
-            beta=(beta/1000)*1e5 #to cm/s
-            alpha=(alpha/1000)*1e5
+            beta_cms=(beta/1000)*1e5 #to cm/s
+            alpha_cms=(alpha/1000)*1e5
             
             # print('rho = '+str(rho))
             # print('beta = '+str(beta))
             # print('alpha = '+str(alpha))
             
             #Verified this produces same value as in GP
-            CS=(2*Spartition)/(4*pi*(rho)*(beta**3))
-            CP=2/(4*pi*(rho)*(alpha**3))
+            CS=(2*Spartition)/(4*pi*(rho)*(beta_cms**3))
+            CP=2/(4*pi*(rho)*(alpha_cms**3))
 
             
             #Get local subfault rupture speed
-            beta=beta/100 #to m/s
-            vr=hfsims.get_local_rupture_speed(zs,beta,rise_time_depths)
-            vr=vr/1000 #to km/s
+            beta_ms=beta_cms/100 #to m/s
+            alpha_ms=alpha_cms/100 #to m/s
+            vr_ms=hfsims.get_local_rupture_speed(zs,beta_ms,rise_time_depths)
+            vr_kms=vr_ms/1000 #to km/s
             dip_factor=hfsims.get_dip_factor(fault[kfault,5],fault[kfault,8],fault[kfault,9])
-            
-            #Subfault corner frequency
-            c0=2.0 #GP2015 value
-            fc_subfault=(c0*vr)/(dip_factor*pi*dl)
-            
-            #get subfault source spectrum
-            #S=((relative_subfault_M0[kfault]*M0/N)*f**2)/(1+fc_scale*(f/fc_subfault)**2)
-            S=small_event_M0*(omega**2/(1+(f/fc_subfault)**2))
-            frankel_conv_operator= fc_scale*((fc_subfault**2+f**2)/(fc_subfault**2+fc_scale*f**2))
-            S=S*frankel_conv_operator
-            
+
+            if source_scaling == 'frankel':
+                # Frankel 95 scaling of corner frequency #verified this looks the same in GP
+                # Right now this applies the same factor to all faults
+                fc_scale=(M0)/(N*stress*dl**3*1e21) #Frankel scaling
+                small_event_M0 = stress*dl**3*1e21
+                
+                #Subfault corner frequency
+                c0=2.0 #GP2015 value
+                fc_subfault=(c0*vr_kms)/(dip_factor*pi*dl)
+                
+                #get subfault source spectrum
+                #S=((relative_subfault_M0[kfault]*M0/N)*f**2)/(1+fc_scale*(f/fc_subfault)**2)
+                S=small_event_M0*(omega**2/(1+(f/fc_subfault)**2))
+                frankel_conv_operator= fc_scale*((fc_subfault**2+f**2)/(fc_subfault**2+fc_scale*f**2))
+                S=S*frankel_conv_operator
+
+            elif source_scaling == 'gravesM0':
+                # Frankel 95 scaling of corner frequency #verified this looks the same in GP
+                # Right now this applies the same factor to all faults
+                fc_scale=(M0)/(N*subfault_M0[kfault]) #Frankel scaling
+                small_event_M0 = subfault_M0[kfault]
+                
+                #Subfault corner frequency
+                c0=2.0 #GP2015 value
+                fc_subfault=(c0*vr_kms)/(dip_factor*pi*dl)
+                
+                #get subfault source spectrum
+                #S=((relative_subfault_M0[kfault]*M0/N)*f**2)/(1+fc_scale*(f/fc_subfault)**2)
+                S=small_event_M0*(omega**2/(1+(f/fc_subfault)**2))
+                frankel_conv_operator= fc_scale*((fc_subfault**2+f**2)/(fc_subfault**2+fc_scale*f**2))
+                S=S*frankel_conv_operator
+
+            elif source_scaling == 'brune':
+
+                # Convert stress drop from bar to dyne/cm^2
+                # 1 bar = 1e6 dyne/cm^2
+                delta_sigma = stress * 1e6
+
+                # Patch moment (dyne-cm)
+                #M0_patch = subfault_M0[kfault]
+
+                # Brune source radius (cm)
+                # r = (7 M0 / 16 Δσ)^(1/3)
+                #r = ((7.0 * M0_patch) / (16.0 * delta_sigma)) ** (1.0/3.0)
+
+                # Brune corner frequency
+                # fc = 0.37 * beta / r
+                #fc_subfault = 0.37 * beta_cms / r
+
+                # Brune omega^2 source spectrum
+                #S = M0_patch * (omega**2/(1+(f/fc_subfault)**2))
+
+            else:
+                print('ERROR: source_scaling must be either "frankel" or "gravesM0" or "brune"')
+                exit()
+
+
+                
             #get high frequency decay
             kappa_dist = 0.00125 * dist_in_km + 0.0375
             P=exp(-pi*kappa_dist*f)
@@ -438,10 +487,10 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
 
                     #get quarter wavelength amplificationf actors
                     # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
-                    I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
+                    I_P=hfsims.get_amplification_factors(f,structure,zs,alpha_ms,rho*1000)
 
                     #Build the entire path term
-                    G_S=(I_S*Q_P)/path_length_P
+                    G_P=(I_P*Q_P)/path_length_P
                     #G_S=(1*Q_P)/path_length_P
 
 
@@ -461,7 +510,7 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                         Ppartition=Epartition
 
                     #And finally multiply everything together to get the subfault amplitude spectrum
-                    AP=CP*S*G_S*P*RP*Ppartition
+                    AP=CP*S*G_P*P*RP*Ppartition
 
                     #Generate windowed time series
                     duration=1./fc_subfault+0.09*(dist/1000)
@@ -567,7 +616,7 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
 
                     #get quarter wavelength amplificationf actors
                     # pass rho in kg/m^3 (this units nightmare is what I get for following Graves' code)
-                    I_S=hfsims.get_amplification_factors(f,structure,zs,beta,rho*1000)
+                    I_S=hfsims.get_amplification_factors(f,structure,zs,beta_ms,rho*1000)
 
                     #Build the entire path term
                     G_S=(I_S*Q_S)/path_length_S
@@ -810,10 +859,11 @@ if __name__ == '__main__':
         Qc_exp=float(sys.argv[25])
         baseline_Qc=float(sys.argv[26])
         window_type=sys.argv[27]
+        source_scaling=sys.argv[28]
         run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,component,model_name,
                             rise_time_depths0,rise_time_depths1,moho_depth_in_km,total_duration,hf_dt,
                             stress_parameter,kappa,Qexp,Pwave,Swave,high_stress_depth,Qmethod,scattering,
-                            Qc_exp,baseline_Qc,rank,size,window_type)
+                            Qc_exp,baseline_Qc,rank,size,window_type,source_scaling)
     else:
         print("ERROR: You're not allowed to run "+sys.argv[1]+" from the shell or it does not exist")
         
