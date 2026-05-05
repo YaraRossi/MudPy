@@ -437,7 +437,7 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                 w=hfsims.windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
                 
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
-                hf_seis_P=hfsims.apply_spectrum(w,AP,f,hf_dt)
+                hf_seis_P=hfsims.apply_spectrum(w,AP,f,hf_dt,is_gnss=False,N_subfault=N)
                 
                 #save thigns to check
                 # if sta=='AL2H':
@@ -513,7 +513,7 @@ def run_parallel_hfsims(home,project_name,rupture_name,N,M0,sta,sta_lon,sta_lat,
                 #w=windowed_gaussian(3*duration,hf_dt,window_type='cua',ptime=Ppaths[0].path['time'][-1],stime=Spaths[0].path['time'][-1])
                 
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
-                hf_seis_S=hfsims.apply_spectrum(w,AS,f,hf_dt)
+                hf_seis_S=hfsims.apply_spectrum(w,AS,f,hf_dt,is_gnss=False,N_subfault=N)
                 
                 #save thigns to check
                 # if sta=='AL2H':
