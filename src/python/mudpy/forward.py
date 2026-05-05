@@ -245,7 +245,7 @@ def waveforms_matrix(home,project_name,fault_name,rupture_name,station_file,GF_l
         n=ndummy.copy()
         e=edummy.copy()
         u=udummy.copy()
-        ncut=len(d)/3
+        ncut=int(len(d)/3)
         n[0].data=d[0:ncut]
         e[0].data=d[ncut:2*ncut]
         u[0].data=d[2*ncut:3*ncut]
@@ -728,7 +728,7 @@ def hf_waveforms(home,project_name,fault_name,rupture_list,GF_list,model_name,ru
             G_name,rise_time_depths,moho_depth_in_km,ncpus,source_time_function='dreger',duration=100.0,
             stf_falloff_rate=4.0,hf_dt=0.02,Pwave=False,Swave=True,hot_start=0,stress_parameter=50,
             high_stress_depth=1e4,kappa=None,Qexp=0.6,Qmethod='shallowest',scattering='off',Qc_exp=0,
-            baseline_Qc=100):
+            baseline_Qc=100, window_type='saragoni_hart'):
 
     '''
     Make semistochastic high frequency accelerograms
@@ -778,7 +778,7 @@ def hf_waveforms(home,project_name,fault_name,rupture_list,GF_list,model_name,ru
                 make_parallel_hfsims(home,project_name,rupture_name,ncpus,sta[ksta],sta_lon[ksta],sta_lat[ksta],
                     comp[kcomp],model_name,rise_time_depths[0],rise_time_depths[1],moho_depth_in_km,total_duration=duration,hf_dt=hf_dt,
                     Pwave=Pwave,Swave=Swave,stress_parameter=stress_parameter,high_stress_depth=high_stress_depth,Qexp=Qexp,
-                    Qmethod=Qmethod,scattering=scattering,Qc_exp=Qc_exp,baseline_Qc=baseline_Qc)
+                    Qmethod=Qmethod,scattering=scattering,Qc_exp=Qc_exp,baseline_Qc=baseline_Qc,window_type=window_type)
 
                 #Combine the separate MPI outputs into one full waveform
                 write_parallel_hfsims(home,project_name,rupture_name,sta[ksta],comp[kcomp],remove=True)
@@ -788,7 +788,7 @@ def hf_waveforms(home,project_name,fault_name,rupture_list,GF_list,model_name,ru
 def make_parallel_hfsims(home,project_name,rupture_name,ncpus,sta,sta_lon,sta_lat,component,model_name,rise_time_depths0,
                          rise_time_depths1,moho_depth_in_km,total_duration,hf_dt,Pwave,Swave,stress_parameter,
                          kappa=0.04,Qexp=0.6,high_stress_depth=30,Qmethod='shallowest',scattering='off',Qc_exp=0,
-                         baseline_Qc=100):
+                         baseline_Qc=100,window_type='saragoni_hart'):
 
 
     '''
@@ -819,7 +819,7 @@ def make_parallel_hfsims(home,project_name,rupture_name,ncpus,sta,sta_lon,sta_la
     #Make mpi system call
     print("MPI: Starting Stochastic High Frequency Simulation on ", ncpus, "CPUs")
     mud_source=environ['MUD']+'/src/python/mudpy/'
-    mpi='mpiexec -n '+str(ncpus)+' python '+mud_source+'hfsims_parallel.py run_parallel_hfsims '+home+' '+project_name+' '+rupture_name+' '+str(N)+' '+str(M0)+' '+sta+' '+str(sta_lon)+' '+str(sta_lat)+' '+model_name+' '+str(rise_time_depths0)+' '+str(rise_time_depths1)+' '+str(moho_depth_in_km)+' '+component+' '+str(total_duration)+' '+str(hf_dt)+' '+str(stress_parameter)+' '+str(kappa)+' '+str(Qexp)+' '+str(Pwave)+' '+str(Swave)+' '+str(high_stress_depth)+' '+str(Qmethod)+' '+str(scattering)+' '+str(Qc_exp)+' '+str(baseline_Qc)
+    mpi='mpiexec -n '+str(ncpus)+' python '+mud_source+'hfsims_parallel.py run_parallel_hfsims '+home+' '+project_name+' '+rupture_name+' '+str(N)+' '+str(M0)+' '+sta+' '+str(sta_lon)+' '+str(sta_lat)+' '+model_name+' '+str(rise_time_depths0)+' '+str(rise_time_depths1)+' '+str(moho_depth_in_km)+' '+component+' '+str(total_duration)+' '+str(hf_dt)+' '+str(stress_parameter)+' '+str(kappa)+' '+str(Qexp)+' '+str(Pwave)+' '+str(Swave)+' '+str(high_stress_depth)+' '+str(Qmethod)+' '+str(scattering)+' '+str(Qc_exp)+' '+str(baseline_Qc)+' '+str(window_type)
     mpi=split(mpi)
     p=subprocess.Popen(mpi)
     p.communicate()
@@ -829,7 +829,7 @@ def make_parallel_hfsims(home,project_name,rupture_name,ncpus,sta,sta_lon,sta_la
 def run_hf_waveforms(home,project_name,fault_name,rupture_list,GF_list,model_name,run_name,dt,NFFT,G_from_file,
             G_name,rise_time_depths,moho_depth_in_km,source_time_function='dreger',duration=100.0,
             stf_falloff_rate=4.0,hf_dt=0.02,Pwave=False,hot_start=0,stress_parameter=50,
-            high_stress_depth=1e4,Qexp=0.6):
+            high_stress_depth=1e4,Qexp=0.6,window_type='saragoni_hart'):
     '''
     Make semistochastic high frequency accelerograms
     '''                        
@@ -867,7 +867,7 @@ def run_hf_waveforms(home,project_name,fault_name,rupture_list,GF_list,model_nam
                 #HF_sims stochastic simulation for single station, component
                 hf_waveform=hfsims.stochastic_simulation(home,project_name,rupture_name,sta[ksta],lonlat[ksta,:],time_epi,
                         model_name,rise_time_depths,moho_depth_in_km,hf_dt=hf_dt,total_duration=duration,component=comp[kcomp],
-                        Pwave=Pwave,stress_parameter=stress_parameter,high_stress_depth=high_stress_depth)
+                        Pwave=Pwave,stress_parameter=stress_parameter,high_stress_depth=high_stress_depth, window_type=window_type)
                 #Write to file
                 write_fakequakes_hf_waveforms_one_by_one(home,project_name,rupture_name,hf_waveform,comp[kcomp])
     
@@ -3119,6 +3119,7 @@ def makefault(fout,strike,dip,nstrike,dx_dip,dx_strike,epicenter,num_updip,num_d
     #Quadrant correction
     #Now horizontal distances
     d=((x**2+y**2)**0.5)*1000
+    zunique=unique(z)
     #Now reckon
     lo=zeros(len(d))
     la=zeros(len(d))
@@ -3127,10 +3128,12 @@ def makefault(fout,strike,dip,nstrike,dx_dip,dx_strike,epicenter,num_updip,num_d
             print('Point on epicenter')
             lo[k]=epicenter[0]
             la[k]=epicenter[1]
+        elif len(zunique)==1: # only one patch, so set lat lon to epicenter input.
+            lo[k]=epicenter[0]
+            la[k]=epicenter[1]
         else:
             lo[k],la[k],ba=g.fwd(epicenter[0],epicenter[1],az[k],d[k]) 
     #Sort them from top right to left along dip
-    zunique=unique(z)
     for k in range(len(zunique)):
         i=where(z==zunique[k])[0] #This finds all faults at a certain depth
         isort=argsort(la[i]) #This sorths them south to north
@@ -4003,6 +4006,9 @@ def build_source_time_function(rise_time,dt,total_time,stf_type='triangle',zeta=
         
         #add the two 
         Mdot = s1+s2    
+
+    #elif stf_type=='ricker':
+    #    print('not coded yet')
     
     else:
         print('ERROR: unrecognized STF type '+stf_type)

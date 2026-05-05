@@ -1,6 +1,6 @@
 def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,component,model_name,
         rise_time_depths,moho_depth_in_km,total_duration=100,hf_dt=0.01,stress_parameter=50,
-        kappa=0.04,Qexp=0.6,Pwave=False,Swave=True,high_stress_depth=1e4): 
+        kappa=0.04,Qexp=0.6,Pwave=False,Swave=True,high_stress_depth=1e4,window_type='saragoni_hart'):
     '''
     Run stochastic HF sims
     
@@ -60,6 +60,7 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
     
     #load velocity structure
     structure=genfromtxt(home+project_name+'/structure/'+model_name)
+    vs30 = get_vs30(structure)
     
     #Frequencies vector
     f=logspace(log10(hf_dt),log10(1/(2*hf_dt))+0.01,50)
@@ -339,10 +340,36 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
 
                 #Generate windowed time series
                 duration=1./fc_subfault+0.09*(dist/1000)
-                w=windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
+                if window_type == 'saragoni_hart':
+                    w=windowed_gaussian(duration,hf_dt,window_type=window_type) # 'saragoni_hart, cua, None
+                elif window_type == 'cua':
+                    # Amplitudes of cua2009 are not taken into account, 
+                    # as they are taken from Graves&Pitarka2015/2010.
+                    if component=='Z':
+                        # for site location with a NEHRP site class BC and above: ROCK
+                        if vs30 >=575:
+                            Pcoeff=6
+                            Scoeff=18
+                        # for site location with a NEHRP site class C and below: SOFT SOIL
+                        elif vs30 <575:
+                            Pcoeff=7
+                            Scoeff=19
+                    elif component in ['N','E']:
+                        # for site location with a NEHRP site class BC and above: ROCK
+                        if vs30 >=575:
+                            Pcoeff=0
+                            Scoeff=12
+                        # for site location with a NEHRP site class C and below: SOFT SOIL
+                        elif vs30 <575:
+                            Pcoeff=1
+                            Scoeff=13
+                    w_p,w_s=windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                                                        Pcoeff=Pcoeff,Scoeff=Scoeff)
+                    w = w_p-w_p.mean()
                 
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
                 hf_seis_P=apply_spectrum(w,AP,f,hf_dt,is_gnss=False,N_subfault=N)
+
                 
                 #What time after OT should this time series start at?
                 time_insert=directP.path['time'][-1]+onset_times[kfault]
@@ -400,11 +427,36 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
     
                 #Generate windowed time series
                 duration=1./fc_subfault+0.063*(dist/1000)
-                w=windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
-                #w=windowed_gaussian(3*duration,hf_dt,window_type='cua',ptime=Ppaths[0].path['time'][-1],stime=Spaths[0].path['time'][-1])
-                
+                if window_type == 'saragoni_hart':
+                    w=windowed_gaussian(duration,hf_dt,window_type=window_type) # 'saragoni_hart, cua, None
+                elif window_type == 'cua':
+                    # assumption here is that acceleration timeseries are made and that these are soft soil locations.
+                    # Hard rock would be 6,18,0,12, Maybe add this as option for later on. Amplitudes of cua2009 are 
+                    # not taken into account. As they are taken from Graves&Pitarka2015/2010.
+                    if component=='Z':
+                        # for site location with a NEHRP site class BC and above: ROCK
+                        if vs30 >=575:
+                            Pcoeff=6
+                            Scoeff=18
+                        # for site location with a NEHRP site class C and below: SOFT SOIL
+                        elif vs30 <575:
+                            Pcoeff=7
+                            Scoeff=19
+                    elif component in ['N','E']:
+                        # for site location with a NEHRP site class BC and above: ROCK
+                        if vs30 >=575:
+                            Pcoeff=0
+                            Scoeff=12
+                        # for site location with a NEHRP site class C and below: SOFT SOIL
+                        elif vs30 <575:
+                            Pcoeff=1
+                            Scoeff=13
+                    w_p,w_s=windowed_gaussian(3*duration,hf_dt,window_type='cua',M=Mw,dist_in_km=dist/1000,
+                                                        Pcoeff=Pcoeff,Scoeff=Scoeff)
+                    w = w_s-w_s.mean()
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
                 hf_seis_S=apply_spectrum(w,AS,f,hf_dt,is_gnss=False,N_subfault=N)
+
                 
                 #What time after OT should this time series start at?
                 time_insert=directS.path['time'][-1]+onset_times[kfault]
@@ -653,7 +705,7 @@ def get_attenuation(f,structure,ray,Qexp,Qtype='S',scattering='on',Qc_exp=0,base
             weightedQ=sum(time_in_layer[:,0]/Qs[:,0])
         
     else:
-        weightedQ=sum(time_in_layer/Qp)
+        weightedQ=sum(time_in_layer[:,0]/Qp)
 
     
     #get frequency dependence
@@ -697,6 +749,41 @@ def get_attenuation_old(f,structure,ray,Qexp,Qtype='S'):
     
     return Q
 
+def get_vs30(model):
+    """
+    model: numpy array with columns
+           [thickness, Vs, Vp, rho, Qs, Qp]
+           thickness in meters
+           Vs in km/s or m/s (consistent units)
+
+    returns: Vs30 in same velocity units as Vs
+    """
+
+    target_depth = 0.030  # kilometers
+    depth = 0.0
+    travel_time = 0.0
+
+    for layer in model:
+        thickness, vs = layer[0], layer[1]
+
+        # half-space
+        if thickness == 0:
+            remaining = target_depth - depth
+            travel_time += remaining / vs
+            break
+
+        # layer fully inside top 30 m
+        if depth + thickness <= target_depth:
+            travel_time += thickness / vs
+            depth += thickness
+
+        # layer partially inside top 30 m
+        else:
+            remaining = target_depth - depth
+            travel_time += remaining / vs
+            break
+
+    return target_depth*1000 / travel_time # meters per second
 
 def get_attenuation_linear(f,structure,zs,dist,Qexp,Qtype='S',scattering='on',Qc_exp=0,baseline_Qc=100):
     '''
@@ -768,13 +855,13 @@ def get_attenuation_linear(f,structure,zs,dist,Qexp,Qtype='S',scattering='on',Qc
 
 
 
-def windowed_gaussian(duration,hf_dt,window_type='saragoni_hart',M=5.0,dist_in_km=50.,std=1.0,ptime=10,stime=20):
+def windowed_gaussian(duration,hf_dt,window_type='saragoni_hart',M=5.0,dist_in_km=50.,std=1.0,ptime=10,stime=20,Pcoeff=0,Scoeff=12):
     '''
     Get a gaussian white noise time series and window it
     '''
     
     from numpy.random import normal
-    from numpy import log,exp,arange
+    from numpy import log,exp,arange,hanning
     from scipy.special import gamma
     
     mean=0.0
@@ -794,19 +881,34 @@ def windowed_gaussian(duration,hf_dt,window_type='saragoni_hart',M=5.0,dist_in_k
         c=b/(epsilon*duration)
         a=(((2*c)**(2*b+1))/gamma(2*b+1))**0.5
         window=a*t**b*exp(-c*t)
+        noise=noise*window
     elif window_type=='cua':
         ptime=0
-        window=cua_envelope(M,dist_in_km,t,ptime,stime,Pcoeff=0,Scoeff=12)
+        stime=0
+        window_p,window_s=cua_envelope_smooth(M,dist_in_km,t,ptime,stime,Pcoeff=Pcoeff,Scoeff=Scoeff,
+                                                p_scale=0.25, s_scale=0.1, decay_scale=2)
+
+        noise=[noise*window_p,noise*window_s]        
+        noise[0] = noise[0] - noise[0].mean()
+        noise[1] = noise[1] - noise[1].mean()
+        noise[0] = noise[0] - noise[0][0]
+        noise[1] = noise[1] - noise[1][0]
+        # taper end to zero (and optionally start too)
+        m = max(1, int(0.03 * len(noise[1])))  # 3% of samples
+        taper = hanning(2*m)
+
+        # taper only the end (this addresses your "goes back after window length" step)
+        noise[0][-m:] *= taper[m:]
+        noise[1][-m:] *= taper[m:]
+        #noise=[window_p,window_s]
     elif window_type==None: #jsut white noise, no window
         window=1
-        
-        
-    noise=noise*window
+        noise=noise*window
     
     return noise
 
         
-def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5, N_subfault=1):
+def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5, is_cua = False, N_subfault=1):
     '''
     Apply the modeled spectrum to the windowed time series
     
@@ -828,6 +930,9 @@ def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5, N_subfault=1):
     #norm_factor=mean(abs(fourier))
     norm_factor=mean(abs(fourier)**2)**0.5
     fourier=fourier/norm_factor
+
+    #if is_cua:
+    #    fourier = fourier*norm_factor
     
     #Keep phase
     phase=angle(fourier)
@@ -871,26 +976,31 @@ def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5, N_subfault=1):
                                 
     
  
-def cua_envelope(M,dist_in_km,times,ptime,stime,Pcoeff=0,Scoeff=12):
+def cua_envelope(M,dist_in_km,times,ptime,stime,Pcoeff=0,Scoeff=12,
+                                      p_scale=1, s_scale=1, decay_scale=1):
     '''
     Cua envelopes, modified from Ran Nof's Cua2008 module
     '''
-    from numpy import where,sqrt,exp,log10,arctan,pi,zeros
-    
+    from numpy import where,sqrt,exp,log10,arctan,pi,zeros,hanning
+
+    # P-wave: acc_H_rock, acc_H_soil, vel_H_rock, vel_H_soil, disp_H_rock, disp_H_soil, acc_V_rock, acc_V_soil, vel_V_rock, vel_V_soil, disp_V_rock, disp_V_soil
+    #             0           1           2           3           4           5           6           7           8           9           10          11 
+    # S-wave: acc_H_rock, acc_H_soil, vel_H_rock, vel_H_soil, disp_H_rock, disp_H_soil, acc_V_rock, acc_V_soil, vel_V_rock, vel_V_soil, disp_V_rock, disp_V_soil
+    #             12          13          14          15          16          17          18          19          20          21          22          23
+
     a = [0.719, 0.737, 0.801, 0.836, 0.950, 0.943, 0.745, 0.739, 0.821, 0.812, 0.956, 0.933,
-            0.779, 0.836, 0.894, 0.960, 1.031, 1.081, 0.778, 0.751, 0.900, 0.882, 1.042, 1.034]
-    b = [-3.273e-3, -2.520e-3, -8.397e-4, -5.409e-4, -1.685e-6, -5.171e-7, -4.010e-3, -4.134e-3,
-                -8.543e-4, -2.652e-6, -1.975e-6, -1.090e-7, -2.555e-3, -2.324e-3, -4.286e-4, -8.328e-4,
-                -1.015e-7, -1.204e-6, -2.66e-5, -2.473e-3, -1.027e-5,- 5.41e-4, -1.124e-5, -4.924e-6]
+         0.779, 0.836, 0.894, 0.960, 1.031, 1.081, 0.778, 0.751, 0.900, 0.882, 1.042, 1.034]
+    b = [-3.273e-3, -2.520e-3, -8.397e-4, -5.409e-4, -1.685e-6, -5.171e-7, -4.010e-3, -4.134e-3,-8.543e-4, -2.652e-6, -1.975e-6, -1.090e-7, 
+         -2.555e-3, -2.324e-3, -4.286e-4, -8.328e-4, -1.015e-7, -1.204e-6, -2.66e-5, -2.473e-3, -1.027e-5, -5.41e-4, -1.124e-5, -4.924e-6]
     d = [-1.195, -1.26, -1.249, -1.284, -1.275, -1.161, -1.200, -1.199, -1.362, -1.483, -1.345, -1.234,
-                -1.352, -1.562, -1.440, -1.589, -1.438, -1.556, -1.385, -1.474, -1.505, -1.484, -1.367, -1.363]
+         -1.352, -1.562, -1.440, -1.589, -1.438, -1.556, -1.385, -1.474, -1.505, -1.484, -1.367, -1.363]
     c1 = [1.600, 2.410, 0.761, 1.214, 2.162, 2.266, 1.752, 2.030, 1.148, 1.402, 1.656, 1.515,
-                1.478, 2.423, 1.114, 1.982, 1.098, 1.946, 1.763, 1.593, 1.388, 1.530, 1.379, 1.549]
+          1.478, 2.423, 1.114, 1.982, 1.098, 1.946, 1.763, 1.593, 1.388, 1.530, 1.379, 1.549]
     c2 = [1.045, 0.955, 1.340, 0.978, 1.088, 1.016, 1.091, 1.972, 1.100, 0.995, 1.164, 1.041,
-                1.105, 1.054, 1.110, 1.067, 1.133, 1.091, 1.112, 1.106, 1.096, 1.04, 1.178, 1.082]
+          1.105, 1.054, 1.110, 1.067, 1.133, 1.091, 1.112, 1.106, 1.096, 1.04, 1.178, 1.082]
     e = [-1.065, -1.051, -3.103, -3.135, -4.958, -5.008, -0.955, -0.775, -2.901, -2.551, -4.799, -4.749,
-                -0.645, -0.338, -2.602, -2.351, -4.342, -4.101, -0.751, -0.355, -2.778, -2.537, -4.738, -4.569]
-    sig_uncorr = [0.307, 0.286, 0.268, 0.263, 0.284, 0.301, 0.288, 0.317, 0.263, 0.298, 02.83, 0.312,
+         -0.645, -0.338, -2.602, -2.351, -4.342, -4.101, -0.751, -0.355, -2.778, -2.537, -4.738, -4.569]
+    sig_uncorr = [0.307, 0.286, 0.268, 0.263, 0.284, 0.301, 0.288, 0.317, 0.263, 0.298, 0.283, 0.312,
                 0.308, 0.312, 0.279, 0.296, 0.277, 0.326, 0.300, 0.300, 0.250, 0.270, 0.253, 0.286]
     sig_corr = [0.233, 0.229, 0.211, 0.219, 0.239, 0.247, 0.243, 0.256, 0.231, 0.239, 0.254, 0.248,
                 0.243, 0.248, 0.230, 0.230, 0.233, 0.236, 0.238, 0.235, 0.220, 0.221, 0.232, 0.230]
@@ -899,24 +1009,24 @@ def cua_envelope(M,dist_in_km,times,ptime,stime,Pcoeff=0,Scoeff=12):
     # Coefficienstime and equation for t_rise (rise time):
     
     alpha_t_rise = [0.06, 0.07, 0.06, 0.07, 0.05, 0.05, 0.06, 0.06, 0.06, 0.06, 0.08, 0.067,
-                0.064, 0.055, 0.093, 0.087, 0.109, 0.12, 0.069, 0.059, 0.116, 0.11, 0.123, 0.124]  
+                    0.064, 0.055, 0.093, 0.087, 0.109, 0.12, 0.069, 0.059, 0.116, 0.11, 0.123, 0.124]  
     beta_t_rise = [5.5e-4, 1.2e-3, 1.33e-3, 4.35e-4, 1.29e-3, 1.19e-3, 7.45e-4, 5.87e-4, 7.32e-4, 1.08e-3, 1.64e-3, 1.21e-3,
-                0, 1.21e-3, 0, 4.0e-4, 7.68e-4, 0, 0, 2.18e-3, 0, 1.24e-3, 1.3e-3, 0]
+                   0, 1.21e-3, 0, 4.0e-4, 7.68e-4, 0, 0, 2.18e-3, 0, 1.24e-3, 1.3e-3, 0]
     delta_t_rise = [0.27, 0.24, 0.23, 0.47, 0.27, 0.47, 0.37, 0.23, 0.25, 0.22, 0.13, 0.28,
-                0.48, 0.34, 0.48, 0.49, 0.38, 0.45, 0.49, 0.26, 0.503, 0.38, 0.257, 0.439]
+                    0.48, 0.34, 0.48, 0.49, 0.38, 0.45, 0.49, 0.26, 0.503, 0.38, 0.257, 0.439]
     mu_t_rise = [-0.37, -0.38, -0.34, -0.68, -0.34, -0.58, -0.51, -0.37, -0.37, -0.36, -0.33, -0.46,
-                -0.89, -0.66, -0.96, -0.98, -0.87,-0.89,-0.97, -0.66, -1.14, -0.91, -0.749, -0.82]
+                 -0.89, -0.66, -0.96, -0.98, -0.87, -0.89, -0.97, -0.66, -1.14, -0.91, -0.749, -0.82] # intercept
     
     # Coefficienstime and equation for delta_t (wave duration):
     
     alpha_delta_t = [0, 0.03, 0.054, 0.03, 0.047, 0.051, 0, 0, 0.046, 0.031, 0.058, 0.043,
-                0, 0.028, 0.02, 0.028, 0.04, 0.03, 0.03, 0.03, 0.018, 0.017, 0.033, 0.023]
+                     0, 0.028, 0.02, 0.028, 0.04, 0.03, 0.03, 0.03, 0.018, 0.017, 0.033, 0.023]
     beta_delta_t = [2.58e-3, 2.37e-3, 1.93e-3, 2.03e-3, 0, 1.12e-3, 2.75e-3, 1.76e-3, 2.61e-3, 1.7e-3, 2.02e-3, 9.94e-4,
-                -4.87e-4, 0, 0, 0, 1.1e-3, 0, -1.4e-3, -1.78e-3, 0, -6.93e-4, 2.6e-4, -7.18e-4]
+                    -4.87e-4, 0, 0, 0, 1.1e-3, 0, -1.4e-3, -1.78e-3, 0, -6.93e-4, 2.6e-4, -7.18e-4]
     delta_delta_t = [0.21, 0.39, 0.16, 0.289, 0.45, 0.33, 0.165, 0.36, 0, 0.26, 0, 0.19,
-                0.13, 0.07, 0, 0.046, -0.15, 0.037, 0.22, 0.307, 0, 0.119, 0, 0.074]
+                     0.13, 0.07, 0, 0.046, -0.15, 0.037, 0.22, 0.307, 0, 0.119, 0, 0.074]
     mu_delta_t = [-0.22, -0.59, -0.36, -0.45, -0.68, -0.59, -0.245, -0.48, -0.213, -0.52, -0.253, -0.42,
-                0.0024, -0.102, 0.046, -0.083, 0.11, -0.066, -0.17, -0.66, -0.072, -0.05, -0.015, -0.005]
+                  0.0024, -0.102, 0.046, -0.083, 0.11, -0.066, -0.17, -0.66, -0.072, -0.05, -0.015, -0.005]# intercept
     
     # Coefficienstime and equation for tau (decay):
     
@@ -928,7 +1038,7 @@ def cua_envelope(M,dist_in_km,times,ptime,stime,Pcoeff=0,Scoeff=12):
                 0.39, 0.51, 0.25, 0.46, 0.36, 0.48, 0.34, 0.51, 0.25, 0.438, 0.303, 0.44]
     gamma_tau = [0.82, 0.58, 0.73, 0.58, 0, 0, 0, 0, 0, 0, 0, 0, 1.73, 1.63, 1.61, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     mu_tau = [-0.75, -0.87, -0.51, -0.372, -0.07, -0.03, -0.97, -0.96, -0.62, -0.55, -0.387, -0.166,
-                -0.59, -0.68, -0.31, -0.55, -0.38, -0.39, -0.44, -0.60, -0.34, -0.368, -0.22, -0.19]
+                -0.59, -0.68, -0.31, -0.55, -0.38, -0.39, -0.44, -0.60, -0.34, -0.368, -0.22, -0.19] # intercept
     avg_gamma = 0.15
 
     
@@ -942,22 +1052,22 @@ def cua_envelope(M,dist_in_km,times,ptime,stime,Pcoeff=0,Scoeff=12):
     tau_gamma = [0.27, 0.26, 0.33, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0.38, 0.39, 0.36, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     mu_gamma = [0.64, 0.71, 0.72, 0.578, 0.61, 0.39, 0.74, 0.84, 0.76, 0.71, 0.849, 0.63,
-                0.26, 0.299, 0.207, 0.302, 0.262, 0.274, 0.255, 0.378, 0.325, 0.325, 0.309, 0.236]
+                0.26, 0.299, 0.207, 0.302, 0.262, 0.274, 0.255, 0.378, 0.325, 0.325, 0.309, 0.236] # intercept
     avg_gamma = 0.15
-    
+  
 
     stat_err = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     sta_corr =  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
     # coefficienstime
-    t_rise_p = 10**(alpha_t_rise[Pcoeff] * M + beta_t_rise[Pcoeff] * dist_in_km + delta_t_rise[Pcoeff] * log10(dist_in_km) + mu_t_rise[Pcoeff])
-    t_rise_s = 10**(alpha_t_rise[Scoeff] * M + beta_t_rise[Scoeff] * dist_in_km + delta_t_rise[Scoeff] * log10(dist_in_km) + mu_t_rise[Scoeff])
-    delta_t_p = 10**(alpha_delta_t[Pcoeff] * M + beta_delta_t[Pcoeff] * dist_in_km + delta_delta_t[Pcoeff] * log10(dist_in_km) + mu_delta_t[Pcoeff])
-    delta_t_s = 10**(alpha_delta_t[Scoeff] * M + beta_delta_t[Scoeff] * dist_in_km + delta_delta_t[Scoeff] * log10(dist_in_km) + mu_delta_t[Scoeff])
-    tau_p = 10**(alpha_tau[Pcoeff] * M + beta_tau[Pcoeff] * dist_in_km + delta_tau[Pcoeff] * log10(dist_in_km) + mu_tau[Pcoeff])
-    tau_s = 10**(alpha_tau[Scoeff] * M + beta_tau[Scoeff] * dist_in_km + delta_tau[Scoeff] * log10(dist_in_km) + mu_tau[Scoeff])
-    gamma_p = 10**(alpha_gamma[Pcoeff] * M + beta_gamma[Pcoeff] * dist_in_km + delta_gamma[Pcoeff] * log10(dist_in_km) + mu_gamma[Pcoeff])
-    gamma_s = 10**(alpha_gamma[Scoeff] * M + beta_gamma[Scoeff] * dist_in_km + delta_gamma[Scoeff] * log10(dist_in_km) + mu_gamma[Scoeff])
+    t_rise_p  = 10**(alpha_t_rise[Pcoeff] * M + beta_t_rise[Pcoeff] * dist_in_km + delta_t_rise[Pcoeff] * log10(dist_in_km) + mu_t_rise[Pcoeff])*p_scale
+    t_rise_s  = 10**(alpha_t_rise[Scoeff] * M + beta_t_rise[Scoeff] * dist_in_km + delta_t_rise[Scoeff] * log10(dist_in_km) + mu_t_rise[Scoeff])*s_scale
+    delta_t_p = 10**(alpha_delta_t[Pcoeff] * M + beta_delta_t[Pcoeff] * dist_in_km + delta_delta_t[Pcoeff] * log10(dist_in_km) + mu_delta_t[Pcoeff])*p_scale
+    delta_t_s = 10**(alpha_delta_t[Scoeff] * M + beta_delta_t[Scoeff] * dist_in_km + delta_delta_t[Scoeff] * log10(dist_in_km) + mu_delta_t[Scoeff])*s_scale
+    tau_p     = 10**(alpha_tau[Pcoeff] * M + beta_tau[Pcoeff] * dist_in_km + delta_tau[Pcoeff] * log10(dist_in_km) + mu_tau[Pcoeff])
+    tau_s     = 10**(alpha_tau[Scoeff] * M + beta_tau[Scoeff] * dist_in_km + delta_tau[Scoeff] * log10(dist_in_km) + mu_tau[Scoeff])
+    gamma_p   = 10**(alpha_gamma[Pcoeff] * M + beta_gamma[Pcoeff] * dist_in_km + delta_gamma[Pcoeff] * log10(dist_in_km) + mu_gamma[Pcoeff])
+    gamma_s   = 10**(alpha_gamma[Scoeff] * M + beta_gamma[Scoeff] * dist_in_km + delta_gamma[Scoeff] * log10(dist_in_km) + mu_gamma[Scoeff])*decay_scale
     
     # Other variable (turn on saturation for larger evenstime?)
     C_p = (arctan(M-5) + (pi/2))*(c1[Pcoeff]*exp(c2[Pcoeff] * (M-5)))
@@ -969,26 +1079,281 @@ def cua_envelope(M,dist_in_km,times,ptime,stime,Pcoeff=0,Scoeff=12):
     A_s = 10**(a[Scoeff]*M + b[Scoeff]*(R1 + C_s) + d[Scoeff]*log10(R1+C_s) + e[Scoeff]+(sta_corr[Scoeff]) + stat_err[Scoeff])
     
     # calculate envelope (ENV)
-    envelope = zeros(len(times))
+    envelope_p = zeros(len(times))
+    envelope_s = zeros(len(times))
 
     # P envelope
-    indx = where((times>=ptime) & (times<ptime+t_rise_p)) # between trigger and rise time
-    if len(indx): envelope[indx] = (A_p/t_rise_p*(times[indx]-ptime)) # make sure we have data in that time frame and get envelope
-    indx = where((times>=ptime+t_rise_p) & (times<ptime+t_rise_p+delta_t_p)) # flat area
-    if len(indx): envelope[indx] = A_p # make sure we have data in that time frame and get envelope
-    indx = where(times>ptime+t_rise_p+delta_t_p) # coda
-    if len(indx): envelope[indx] = (A_p/((times[indx]-ptime-t_rise_p-delta_t_p+tau_p)**gamma_p)) # make sure we have data in that time frame and get envelope
+    indx = where((times>=ptime) & (times<ptime+t_rise_p))[0] # between trigger and rise time
+    if len(indx): envelope_p[indx] = (A_p/t_rise_p*(times[indx]-ptime)) # make sure we have data in that time frame and get envelope
+    indx = where((times>=ptime+t_rise_p) & (times<ptime+t_rise_p+delta_t_p))[0] # flat area
+    if len(indx): envelope_p[indx] = A_p # make sure we have data in that time frame and get envelope
+    indx = where(times>ptime+t_rise_p+delta_t_p)[0] # coda
+    if len(indx): envelope_p[indx] = (A_p* (tau_p**gamma_p)/((times[indx]-ptime-t_rise_p-delta_t_p+tau_p)**gamma_p)) # make sure we have data in that time frame and get envelope
     
     # S envelope
-    indx = where((times>=stime) & (times<stime+t_rise_s)) # between trigger and rise time
-    if len(indx): envelope[indx] += (A_s/t_rise_s*(times[indx]-stime)) # make sure we have data in that time frame and get envelope
-    indx = where((times>=stime+t_rise_s) & (times<stime+t_rise_s+delta_t_s)) # flat area
-    if len(indx): envelope[indx] += A_s # make sure we have data in that time frame and get envelope
-    indx = where(times>stime+t_rise_s+delta_t_s) # coda
-    if len(indx): envelope[indx] += (A_s/((times[indx]-stime-t_rise_s-delta_t_s+tau_s)**gamma_s)) # make sure we have data in that time frame and get envelope
+    indx = where((times>=stime) & (times<stime+t_rise_s))[0] # between trigger and rise time
+    if len(indx): envelope_s[indx] = (A_s/t_rise_s*(times[indx]-stime)) # make sure we have data in that time frame and get envelope
+    indx = where((times>=stime+t_rise_s) & (times<stime+t_rise_s+delta_t_s))[0] # flat area
+    if len(indx): envelope_s[indx] = A_s # make sure we have data in that time frame and get envelope
+    indx = where(times>stime+t_rise_s+delta_t_s)[0] # coda
+    if len(indx): envelope_s[indx] = (A_s* (tau_s**gamma_s)/((times[indx]-stime-t_rise_s-delta_t_s+tau_s)**gamma_s)) # make sure we have data in that time frame and get envelope
     
+    taper_frac = 0.05
+    m = max(1, int(taper_frac * len(times)))
+    taper = hanning(2*m)
+    envelope_p[:m] *= taper[:m]
+    envelope_p[-m:] *= taper[m:]
+    envelope_s[:m] *= taper[:m]
+    envelope_s[-m:] *= taper[m:]
+
+    return envelope_p, envelope_s # normalized to P-wave amplitude
+    
+def splice_sine_hump(times, envelope, k0, k1):
+    """
+    Replace envelope[k0:k1+1] with a smooth 1-hump sinusoid segment that matches:
+      y(t0), y(t1), slope at t0 (from last 2 points before k0), slope at t1 (from first 2 points after k1)
+
+    times: 1D array
+    envelope: 1D array (modified in-place and also returned)
+    k0, k1: indices defining the segment to replace (k0 < k1)
+
+    Requirements:
+      k0 >= 1 and k1 <= len(envelope)-2 so we can estimate slopes from neighbors.
+    """
+    from numpy import pi, cos, sin
+
+    t0 = times[k0]
+    t1 = times[k1]
+    L = t1 - t0
+    if L <= 0:
+        return envelope
+
+    # endpoint values
+    y0 = envelope[k0]
+    y1 = envelope[k1]
+
+    # endpoint slopes (user request: slope from last two points in ramp-up, and slope from first two in ramp-down)
+    m0 = (envelope[k0] - envelope[k0-1]) / (times[k0] - times[k0-1])
+    m1 = (envelope[k1+1] - envelope[k1]) / (times[k1+1] - times[k1])
+
+    # one hump frequency across [t0, t1]
+    omega = pi / L
+
+    # Solve coefficients from the 4 boundary conditions
+    # b from matching end slopes, c from slope difference
+    b = 0.5 * (m0 + m1)
+    c = (m0 - m1) / (2.0 * omega)
+
+    # Solve a and d from matching end values
+    # using: y(t0)=a+b*t0+d, y(t1)=a+b*t1-d  (since cos(pi)=-1, sin(pi)=0)
+    d = 0.5 * ((y0 - b*t0) - (y1 - b*t1))
+    a = (y0 - b*t0) - d
+
+    # Fill replacement segment
+    tt = times[k0:k1+1] - t0
+    envelope[k0:k1+1] = a + b*times[k0:k1+1] + c*sin(omega*tt) + d*cos(omega*tt)
+
     return envelope
+
+
+
+def cua_envelope_smooth(M,dist_in_km,times,ptime,stime,Pcoeff=0,Scoeff=12, p_scale=1, s_scale=1, decay_scale=1):
+    '''
+    Cua envelopes, modified from Ran Nof's Cua2008 module
+    '''
+    from numpy import where,sqrt,exp,log10,arctan,pi,zeros,hanning, cos, clip, where, argmin
+
+    # P-wave: acc_H_rock, acc_H_soil, vel_H_rock, vel_H_soil, disp_H_rock, disp_H_soil, acc_V_rock, acc_V_soil, vel_V_rock, vel_V_soil, disp_V_rock, disp_V_soil
+    #             0           1           2           3           4           5           6           7           8           9           10          11 
+    # S-wave: acc_H_rock, acc_H_soil, vel_H_rock, vel_H_soil, disp_H_rock, disp_H_soil, acc_V_rock, acc_V_soil, vel_V_rock, vel_V_soil, disp_V_rock, disp_V_soil
+    #             12          13          14          15          16          17          18          19          20          21          22          23
+
+    a = [0.719, 0.737, 0.801, 0.836, 0.950, 0.943, 0.745, 0.739, 0.821, 0.812, 0.956, 0.933,
+         0.779, 0.836, 0.894, 0.960, 1.031, 1.081, 0.778, 0.751, 0.900, 0.882, 1.042, 1.034]
+    b = [-3.273e-3, -2.520e-3, -8.397e-4, -5.409e-4, -1.685e-6, -5.171e-7, -4.010e-3, -4.134e-3,-8.543e-4, -2.652e-6, -1.975e-6, -1.090e-7, 
+         -2.555e-3, -2.324e-3, -4.286e-4, -8.328e-4, -1.015e-7, -1.204e-6, -2.66e-5, -2.473e-3, -1.027e-5, -5.41e-4, -1.124e-5, -4.924e-6]
+    d = [-1.195, -1.26, -1.249, -1.284, -1.275, -1.161, -1.200, -1.199, -1.362, -1.483, -1.345, -1.234,
+         -1.352, -1.562, -1.440, -1.589, -1.438, -1.556, -1.385, -1.474, -1.505, -1.484, -1.367, -1.363]
+    c1 = [1.600, 2.410, 0.761, 1.214, 2.162, 2.266, 1.752, 2.030, 1.148, 1.402, 1.656, 1.515,
+          1.478, 2.423, 1.114, 1.982, 1.098, 1.946, 1.763, 1.593, 1.388, 1.530, 1.379, 1.549]
+    c2 = [1.045, 0.955, 1.340, 0.978, 1.088, 1.016, 1.091, 1.972, 1.100, 0.995, 1.164, 1.041,
+          1.105, 1.054, 1.110, 1.067, 1.133, 1.091, 1.112, 1.106, 1.096, 1.04, 1.178, 1.082]
+    e = [-1.065, -1.051, -3.103, -3.135, -4.958, -5.008, -0.955, -0.775, -2.901, -2.551, -4.799, -4.749,
+         -0.645, -0.338, -2.602, -2.351, -4.342, -4.101, -0.751, -0.355, -2.778, -2.537, -4.738, -4.569]
+    sig_uncorr = [0.307, 0.286, 0.268, 0.263, 0.284, 0.301, 0.288, 0.317, 0.263, 0.298, 0.283, 0.312,
+                0.308, 0.312, 0.279, 0.296, 0.277, 0.326, 0.300, 0.300, 0.250, 0.270, 0.253, 0.286]
+    sig_corr = [0.233, 0.229, 0.211, 0.219, 0.239, 0.247, 0.243, 0.256, 0.231, 0.239, 0.254, 0.248,
+                0.243, 0.248, 0.230, 0.230, 0.233, 0.236, 0.238, 0.235, 0.220, 0.221, 0.232, 0.230]
     
+    # Coefficienstime for eqn: log(env_param) = alpha*M + beta*R + delta*logR + mu
+    # Coefficienstime and equation for t_rise (rise time):
+    
+    alpha_t_rise = [0.06, 0.07, 0.06, 0.07, 0.05, 0.05, 0.06, 0.06, 0.06, 0.06, 0.08, 0.067,
+                    0.064, 0.055, 0.093, 0.087, 0.109, 0.12, 0.069, 0.059, 0.116, 0.11, 0.123, 0.124]  
+    beta_t_rise = [5.5e-4, 1.2e-3, 1.33e-3, 4.35e-4, 1.29e-3, 1.19e-3, 7.45e-4, 5.87e-4, 7.32e-4, 1.08e-3, 1.64e-3, 1.21e-3,
+                   0, 1.21e-3, 0, 4.0e-4, 7.68e-4, 0, 0, 2.18e-3, 0, 1.24e-3, 1.3e-3, 0]
+    delta_t_rise = [0.27, 0.24, 0.23, 0.47, 0.27, 0.47, 0.37, 0.23, 0.25, 0.22, 0.13, 0.28,
+                    0.48, 0.34, 0.48, 0.49, 0.38, 0.45, 0.49, 0.26, 0.503, 0.38, 0.257, 0.439]
+    mu_t_rise = [-0.37, -0.38, -0.34, -0.68, -0.34, -0.58, -0.51, -0.37, -0.37, -0.36, -0.33, -0.46,
+                 -0.89, -0.66, -0.96, -0.98, -0.87, -0.89, -0.97, -0.66, -1.14, -0.91, -0.749, -0.82] # intercept
+    
+    # Coefficienstime and equation for delta_t (wave duration):
+    
+    alpha_delta_t = [0, 0.03, 0.054, 0.03, 0.047, 0.051, 0, 0, 0.046, 0.031, 0.058, 0.043,
+                     0, 0.028, 0.02, 0.028, 0.04, 0.03, 0.03, 0.03, 0.018, 0.017, 0.033, 0.023]
+    beta_delta_t = [2.58e-3, 2.37e-3, 1.93e-3, 2.03e-3, 0, 1.12e-3, 2.75e-3, 1.76e-3, 2.61e-3, 1.7e-3, 2.02e-3, 9.94e-4,
+                    -4.87e-4, 0, 0, 0, 1.1e-3, 0, -1.4e-3, -1.78e-3, 0, -6.93e-4, 2.6e-4, -7.18e-4]
+    delta_delta_t = [0.21, 0.39, 0.16, 0.289, 0.45, 0.33, 0.165, 0.36, 0, 0.26, 0, 0.19,
+                     0.13, 0.07, 0, 0.046, -0.15, 0.037, 0.22, 0.307, 0, 0.119, 0, 0.074]
+    mu_delta_t = [-0.22, -0.59, -0.36, -0.45, -0.68, -0.59, -0.245, -0.48, -0.213, -0.52, -0.253, -0.42,
+                  0.0024, -0.102, 0.046, -0.083, 0.11, -0.066, -0.17, -0.66, -0.072, -0.05, -0.015, -0.005]# intercept
+    
+    # Coefficienstime and equation for tau (decay):
+    
+    alpha_tau = [0.047, 0.087, 0.054, 0.0403, 0, 0.035, 0.03, 0.057, 0.03, 0.0311, 0.05, 0.052,
+                0.037, 0.0557, 0.029, 0.045, 0.029, 0.038, 0.031, 0.06, 0.04, 0.051, 0.024, 0.022]  
+    beta_tau = [0, -1.89e-3, 5.37e-5, -1.26e-3, 0, -1.27e-3, 2.75e-3, -1.36e-3, 8.6e-4, -6.4e-4, 8.9e-4, 0,
+                0, -8.2e-4, 8.0e-4, -5.46e-4, 0, -1.34e-3, 0, -1.45e-3, 9.4e-4, -1.41e-3, 0, -1.65e-3]
+    delta_tau = [0.48, 0.58, 0.41, 0.387, 0.19, 0.19, 0.58, 0.63, 0.35, 0.44, 0.16, 0.12,
+                0.39, 0.51, 0.25, 0.46, 0.36, 0.48, 0.34, 0.51, 0.25, 0.438, 0.303, 0.44]
+    gamma_tau = [0.82, 0.58, 0.73, 0.58, 0, 0, 0, 0, 0, 0, 0, 0, 1.73, 1.63, 1.61, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    mu_tau = [-0.75, -0.87, -0.51, -0.372, -0.07, -0.03, -0.97, -0.96, -0.62, -0.55, -0.387, -0.166,
+                -0.59, -0.68, -0.31, -0.55, -0.38, -0.39, -0.44, -0.60, -0.34, -0.368, -0.22, -0.19] # intercept
+    avg_gamma = 0.15
+
+    
+    # Coefficienstime and equation for gamma (decay):
+    alpha_gamma = [-0.032, -0.048, -0.044, -0.0403, -0.062, -0.061, -0.027, -0.024, -0.039, -0.037, -0.052, -0.066,
+                -0.014, -0.015, -0.024, -0.031, -0.025, -2.67e-2, -0.0149, -0.0197, -0.028, -0.0334, -0.015, -0.0176] #<--should be =-0.048 for i=1? not =-0.48?
+    beta_gamma = [-1.81e-3, -1.42e-3, -1.65e-3, -2.0e-3, -2.3e-3, -1.9e-3, -1.75e-3, -1.6e-3, -1.88e-3, -2.23e-3, -1.67e-3, -2.5e-3,
+                -5.28e-4, -5.89e-4, -1.02e-3, -4.61e-4, -4.22e-4, 2.0e-4, -4.64e-4, 0, -8.32e-4, 0, 0, 5.65e-4]
+    delta_gamma = [-0.1, -0.13, -0.16, 0, 0, 0.11, -0.18, -0.24, -0.18, -0.14, -0.21, 0,
+                -0.11, -0.163, -0.055, -0.162, -0.145, -0.217, -0.122, -0.242, -0.123, -0.21, -0.229, -0.25]
+    tau_gamma = [0.27, 0.26, 0.33, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0.38, 0.39, 0.36, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    mu_gamma = [0.64, 0.71, 0.72, 0.578, 0.61, 0.39, 0.74, 0.84, 0.76, 0.71, 0.849, 0.63,
+                0.26, 0.299, 0.207, 0.302, 0.262, 0.274, 0.255, 0.378, 0.325, 0.325, 0.309, 0.236] # intercept
+    avg_gamma = 0.15
+  
+
+    stat_err = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    sta_corr =  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+    # coefficienstime
+    t_rise_p  = 10**(alpha_t_rise[Pcoeff] * M + beta_t_rise[Pcoeff] * dist_in_km + delta_t_rise[Pcoeff] * log10(dist_in_km) + mu_t_rise[Pcoeff])*p_scale
+    t_rise_s  = 10**(alpha_t_rise[Scoeff] * M + beta_t_rise[Scoeff] * dist_in_km + delta_t_rise[Scoeff] * log10(dist_in_km) + mu_t_rise[Scoeff])*s_scale
+    delta_t_p = 10**(alpha_delta_t[Pcoeff] * M + beta_delta_t[Pcoeff] * dist_in_km + delta_delta_t[Pcoeff] * log10(dist_in_km) + mu_delta_t[Pcoeff])*p_scale
+    delta_t_s = 10**(alpha_delta_t[Scoeff] * M + beta_delta_t[Scoeff] * dist_in_km + delta_delta_t[Scoeff] * log10(dist_in_km) + mu_delta_t[Scoeff])*s_scale
+    tau_p     = 10**(alpha_tau[Pcoeff] * M + beta_tau[Pcoeff] * dist_in_km + delta_tau[Pcoeff] * log10(dist_in_km) + mu_tau[Pcoeff])
+    tau_s     = 10**(alpha_tau[Scoeff] * M + beta_tau[Scoeff] * dist_in_km + delta_tau[Scoeff] * log10(dist_in_km) + mu_tau[Scoeff])
+    gamma_p   = 10**(alpha_gamma[Pcoeff] * M + beta_gamma[Pcoeff] * dist_in_km + delta_gamma[Pcoeff] * log10(dist_in_km) + mu_gamma[Pcoeff])
+    gamma_s   = 10**(alpha_gamma[Scoeff] * M + beta_gamma[Scoeff] * dist_in_km + delta_gamma[Scoeff] * log10(dist_in_km) + mu_gamma[Scoeff])*decay_scale
+    
+    # Other variable (turn on saturation for larger evenstime?)
+    C_p = (arctan(M-5) + (pi/2))*(c1[Pcoeff]*exp(c2[Pcoeff] * (M-5)))
+    C_s = (arctan(M-5) + (pi/2))*(c1[Scoeff]*exp(c2[Scoeff] * (M-5)))
+    R1 = sqrt(dist_in_km**2 + 9)
+    
+    # Basic AMplitudes
+    A_p = 10**(a[Pcoeff]*M + b[Pcoeff]*(R1 + C_p) + d[Pcoeff]*log10(R1+C_p) + e[Pcoeff]+(sta_corr[Pcoeff]) + stat_err[Pcoeff])
+    A_s = 10**(a[Scoeff]*M + b[Scoeff]*(R1 + C_s) + d[Scoeff]*log10(R1+C_s) + e[Scoeff]+(sta_corr[Scoeff]) + stat_err[Scoeff])
+    
+    # calculate envelope (ENV)
+    envelope_p = zeros(len(times))
+    envelope_s = zeros(len(times))
+
+    top_rounding = 0.05          # 0 = perfectly flat top, 0.05 = gentle rounding (recommended 0.02–0.10)
+    blend_len_frac = 0.10        # blend length as fraction of tau (recommended 0.05–0.30)
+
+    ######################################
+    ######################################
+    # P envelope
+    # rise (half cosine ramp from 0 to A_p)
+    indx = where((times >= ptime) & (times < ptime + t_rise_p))[0]
+    if len(indx): 
+        tt = (times[indx] - ptime) / t_rise_p
+        envelope_p[indx] = A_p * 0.5 * (1.0 - cos(pi * tt))
+
+
+    # coda (power-law) with smooth blend from A_p -> decay to avoid a slope jump at start of coda
+    indx = where(times >= ptime + t_rise_p + delta_t_p)[0]
+    if len(indx):
+        t0 = ptime + t_rise_p + delta_t_p
+        decay = A_p * (tau_p**gamma_p) / ((times[indx] - t0 + tau_p)**gamma_p)
+        blend_len = max(blend_len_frac * tau_p, 1e-12)  # seconds, avoid zero
+        u = clip((times[indx] - t0) / blend_len, 0.0, 1.0)
+        blend = 0.5 * (1.0 - cos(pi * u))  # cosine ramp 0->1
+        envelope_p[indx] = (1.0 - blend) * A_p + blend * decay
+
+    
+    # rounded "flat" area (nearly constant, but C1 at both ends)
+    indx = where((times >= ptime + t_rise_p) & (times < ptime + t_rise_p + delta_t_p))[0]
+    '''if len(indx): 
+        tt = (times[indx] - (ptime + t_rise_p)) / delta_t_p  
+        hump = 0.5 * (1.0 - cos(2.0 * pi * tt))              # 0 at edges, 1 at middle, no wiggles
+        envelope_p[indx] = A_p * (1.0 + top_rounding * hump)'''
+    
+    n_pad = 3  # widen/shorten the hump by a few samples; try 0, 2, 5, 10
+    # --- after you compute envelope_p with your original piecewise code ---
+    # find the join indices (closest sample indices to the theoretical join times)
+    k_rise_end = argmin(abs(times - (ptime + t_rise_p)))
+    k_decay_start = argmin(abs(times - (ptime + t_rise_p + delta_t_p)))
+
+    # define the splice region (keep within valid bounds)
+    k0 = max(1, k_rise_end - n_pad)
+    k1 = min(len(envelope_p) - 2, k_decay_start + n_pad)
+
+    # do the splice
+    if k1 > k0:
+        envelope_p = splice_sine_hump(times, envelope_p, k0, k1)
+    
+    ######################################
+    ######################################
+    # S envelope
+    indx = where((times >= stime) & (times < stime + t_rise_s))[0]
+    if len(indx):
+        tt = (times[indx] - stime) / t_rise_s  # 0..1
+        envelope_s[indx] = A_s * 0.5 * (1.0 - cos(pi * tt))
+
+
+
+    # coda (power-law) with smooth blend from A_s -> decay to avoid a slope jump at start of coda
+    indx = where(times >= stime + t_rise_s + delta_t_s)[0]
+    if len(indx):
+        t0 = stime + t_rise_s + delta_t_s
+        decay = A_s * (tau_s**gamma_s) / ((times[indx] - t0 + tau_s)**gamma_s)
+
+        blend_len = max(blend_len_frac * tau_s, 1e-12)
+        u = clip((times[indx] - t0) / blend_len, 0.0, 1.0)
+        blend = 0.5 * (1.0 - cos(pi * u))
+
+        envelope_s[indx] = (1.0 - blend) * A_s + blend * decay
+        # rounded "flat" area (nearly constant, but C1 at both ends)
+    
+    
+    ndx = where((times >= stime + t_rise_s) & (times < stime + t_rise_s + delta_t_s))[0]
+    '''if len(indx):
+        tt = (times[indx] - (stime + t_rise_s)) / delta_t_s  # 0..1
+        hump = 0.5 * (1.0 - cos(2.0 * pi * tt))              # 0..1..0 (single bump)
+        envelope_s[indx] = A_s * (1.0 + top_rounding * hump)'''
+    k_rise_end = argmin(abs(times - (stime + t_rise_s)))
+    k_decay_start = argmin(abs(times - (stime + t_rise_s + delta_t_s)))
+
+    k0 = max(1, k_rise_end - n_pad)
+    k1 = min(len(envelope_s) - 2, k_decay_start + n_pad)
+
+    if k1 > k0:
+        envelope_s = splice_sine_hump(times, envelope_s, k0, k1)
+
+    '''taper_frac = 0.1
+    m = max(1, int(taper_frac * len(times)))
+    taper = hanning(2*m)
+    #envelope_p[:m] *= taper[:m]
+    envelope_p[-m:] *= taper[m:]
+    #envelope_s[:m] *= taper[:m]
+    envelope_s[-m:] *= taper[m:]'''
+
+    return envelope_p, envelope_s # normalized to P-wave amplitude
 
 def conically_avg_radiation_pattern(strike,dip,rake,azimuth,take_off_angle,
                                     component_angle,angle_range=45,Nrandom=1000):

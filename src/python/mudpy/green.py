@@ -110,9 +110,9 @@ def run_syn(home,project_name,source,station_file,green_path,model_name,integrat
     ss_length_in_km=ss_length/1000.
     ds_length_in_km=ds_length/1000.
     strdepth='%.4f' % zs
-    if static==0 and tsunami==0:  #Where to save dynamic waveforms
+    if static==0 and tsunami==False:  #Where to save dynamic waveforms
         green_path=green_path+'dynamic/'+model_name+"_"+strdepth+".sub"+subfault+"/"
-    if static==0 and tsunami==1:  #Where to save dynamic waveforms
+    if static==0 and tsunami==True:  #Where to save dynamic waveforms
         green_path=green_path+'tsunami/'+model_name+"_"+strdepth+".sub"+subfault+"/"
     print("--> Computing synthetics at stations for the source at ("+str(xs)+" , "+str(ys)+")")
     staname=genfromtxt(station_file,dtype="U",usecols=0)
