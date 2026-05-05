@@ -342,7 +342,7 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                 w=windowed_gaussian(duration,hf_dt,window_type='saragoni_hart')
                 
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
-                hf_seis_P=apply_spectrum(w,AP,f,hf_dt)
+                hf_seis_P=apply_spectrum(w,AP,f,hf_dt,is_gnss=False,N_subfault=N)
                 
                 #What time after OT should this time series start at?
                 time_insert=directP.path['time'][-1]+onset_times[kfault]
@@ -404,7 +404,7 @@ def stochastic_simulation(home,project_name,rupture_name,sta,sta_lon,sta_lat,com
                 #w=windowed_gaussian(3*duration,hf_dt,window_type='cua',ptime=Ppaths[0].path['time'][-1],stime=Spaths[0].path['time'][-1])
                 
                 #Go to frequency domain, apply amplitude spectrum and ifft for final time series
-                hf_seis_S=apply_spectrum(w,AS,f,hf_dt)
+                hf_seis_S=apply_spectrum(w,AS,f,hf_dt,is_gnss=False,N_subfault=N)
                 
                 #What time after OT should this time series start at?
                 time_insert=directS.path['time'][-1]+onset_times[kfault]
@@ -806,7 +806,7 @@ def windowed_gaussian(duration,hf_dt,window_type='saragoni_hart',M=5.0,dist_in_k
     return noise
 
         
-def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5):
+def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5, N_subfault=1):
     '''
     Apply the modeled spectrum to the windowed time series
     
@@ -861,6 +861,8 @@ def apply_spectrum(w,A,f,hf_dt,is_gnss=False,gnss_scale=1/2**0.5):
     seis=real(fft.ifft(fourier))
     
     if is_gnss:
+        seis *= len(seis)**0.5
+    elif N_subfault == 1:
         seis *= len(seis)**0.5
     else:
         seis=seis*len(seis)
